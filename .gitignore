@@ -1,3 +1,7 @@
+*.s??
+/audio
+*.log
+*.ini
 data/hw_settings.ini
 data/user_settings.ini
 sbitx
