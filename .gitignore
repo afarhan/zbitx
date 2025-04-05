@@ -1,7 +1,10 @@
-*.s??
-/audio
-*.log
+.*.s??
+audio/
+clock.c
+*.backup
+data/**
 *.ini
-data/hw_settings.ini
-data/user_settings.ini
-sbitx
+main_ui.ini
+sbitx.db
+sbitx1
+sbitx_log.txt
