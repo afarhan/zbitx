@@ -389,7 +389,7 @@ float cw_tx_get_sample(){
 		}
 		else if (symbol_now & CW_WORD_DELAY){
 			keydown_count = 0;
-			keyup_count = cw_period * 6;
+			keyup_count = cw_period * 3; // 6 dits, but is somewhere getting doubled
 			cw_current_symbol = CW_DOT_DELAY;
 		}
 		//else just continue in CW_IDLE
@@ -446,7 +446,7 @@ float cw_tx_get_sample(){
 				cw_next_symbol = CW_DASH;
 			}
 			if (cw_next_symbol == CW_IDLE && cw_last_symbol == CW_DASH && (symbol_now & CW_DOT)){
-				cw_next_symbol = CW_DASH;
+				cw_next_symbol = CW_DOT;
 			}
 		}
 		break;

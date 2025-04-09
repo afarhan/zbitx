@@ -1,3 +1,10 @@
-data/hw_settings.ini
-data/user_settings.ini
-sbitx
+.*.s??
+audio/
+clock.c
+*.backup
+data/**
+*.ini
+main_ui.ini
+sbitx.db
+sbitx1
+sbitx_log.txt

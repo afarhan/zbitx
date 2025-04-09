@@ -4202,6 +4202,8 @@ gboolean ui_tick(gpointer gook){
 
 	ticks++;
 
+if(ticks % 10 == 0)
+{
 	while (q_length(&q_remote_commands) > 0){
 		//read each command until the 
 		char remote_cmd[1000];
@@ -4253,8 +4255,9 @@ gboolean ui_tick(gpointer gook){
     //write_console(FONT_LOG, message);
 	}
 
+} //ticks%
 
-	if (ticks % 20 == 0){
+	if (ticks % 1 == 0){
   	modem_poll(mode_id(get_field("r1:mode")->value));
 	}
 
@@ -4270,14 +4273,15 @@ gboolean ui_tick(gpointer gook){
 		default:
 			tick_count = 100; 
 	}
-	if (ticks >= tick_count){
+	
+if (ticks %  300*tick_count == 0){
 
 		char response[6], cmd[10];
 		cmd[0] = 1;
 
 		if (zbitx_available)
 			zbitx_poll(0);
-
+		
 		try_ntp();
 
 		if(in_tx){
@@ -4350,12 +4354,17 @@ gboolean ui_tick(gpointer gook){
   }
 	//update_field(get_field("#text_in")); //modem might have extracted some text
 
-  hamlib_slice();
-	remote_slice();
-	save_user_settings(0);
+  if(ticks % 100 == 0) 
+	{
+		hamlib_slice();
+		remote_slice();
+		save_user_settings(0);
+	}
 
+	if(ticks % 10 == 0)
+  {
  
-	f = get_field("r1:mode");
+	struct field *f = get_field("r1:mode");
 	//straight key in CW
 	if (f && (!strcmp(f->value, "2TONE") || !strcmp(f->value, "LSB") 
 	|| !strcmp(f->value, "AM") || !strcmp(f->value, "USB"))){
@@ -4371,7 +4380,10 @@ gboolean ui_tick(gpointer gook){
 			edit_field(f_focus, MIN_KEY_DOWN);
 		else
 			edit_field(f_focus, MIN_KEY_UP);
-	}	
+	}
+
+  } // ticks%x
+	
 	return TRUE;
 }
 
