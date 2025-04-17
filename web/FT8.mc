@@ -9,7 +9,7 @@ F2 Call,! * {GRIDSQUARE}
 F3 Reply,! * {SENTRST} 
 F4 RRply,! * R{SENTRST} 
 F5 73,! * 73
-F6 Hi, Hi hw r u? 
+F6 Hi, +VU2ESE QRV 
 F7 RRR,! * RRR
 F8 RR73,! * RR73
 F9 ,

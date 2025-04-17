@@ -553,7 +553,7 @@ struct field main_controls[] = {
 		"ON/OFF", 0,0,0,COMMON_CONTROL},
 
 	{ "r1:mode", NULL, 5, 5, 40, 40, "MODE", 40, "USB", FIELD_SELECTION, FONT_FIELD_VALUE, 
-		"USB/LSB/CW/CWR/FT8/AM/DIGI/2TONE", 0,0,0, COMMON_CONTROL},
+		"USB/LSB/CW/CWR/FT8/MSG/AM/DIGI/2TONE", 0,0,0, COMMON_CONTROL},
 	{ "#bw", do_bandwidth, 495, 5, 40, 40, "BW", 40, "", FIELD_NUMBER, FONT_FIELD_VALUE, 
 		"", 50, 5000, 50,COMMON_CONTROL},
 
@@ -695,6 +695,10 @@ struct field main_controls[] = {
 		"ON/OFF", 0,0,0, FT8_CONTROL},
   { "#ft8_repeat", NULL, 1000, -1000, 50, 50, "FT8_REPEAT", 40, "5", FIELD_NUMBER, FONT_FIELD_VALUE,
     "", 1, 10, 1, FT8_CONTROL},
+
+	//MSG controls
+	{"#msg_presence", NULL, 415, 5, 40, 40, "PRESENCE", 40, "Ready", FIELD_SELECTION, FONT_FIELD_VALUE, 
+		"READY/AWAY/BUSY/SILENT/QUD/QSP/CQ", 0, 1024, 1,COMMON_CONTROL},
 
 	{"#telneturl", NULL, 1000, -1000, 400, 149, "TELNETURL", 70, "dxc.nc7j.com:7373", FIELD_TEXT, FONT_SMALL, 
 		"", 0,32,1, 0},
@@ -1360,6 +1364,8 @@ static int mode_id(const char *mode_str){
 		return MODE_LSB;
 	else if (mode_str[0] == 'F' && mode_str[1] == 'T' && mode_str[2] == '8' && mode_str[3] == 0)
 		return MODE_FT8;
+	else if (mode_str[0] == 'M' && mode_str[1] == 'S' && mode_str[2] == 'G' && mode_str[3] == 0)
+		return MODE_MSG;
 	else if (mode_str[0] == 'N' && mode_str[1] == 'B' && mode_str[2] == 'F' && mode_str[3] == 'M')
 		return MODE_NBFM;
 	else if (mode_str[0] == 'A' && mode_str[1] == 'M' && mode_str[2] == '0')
@@ -1371,29 +1377,6 @@ static int mode_id(const char *mode_str){
 	return -1;
 }
 
-/*
-static int mode_id(const char *mode_str){
-	if (!strcmp(mode_str, "CW"))
-		return MODE_CW;
-	else if (!strcmp(mode_str, "CWR"))
-		return MODE_CWR;
-	else if (!strcmp(mode_str, "USB"))
-		return MODE_USB;
-	else if (!strcmp(mode_str,  "LSB"))
-		return MODE_LSB;
-	else if (!strcmp(mode_str,  "FT8"))
-		return MODE_FT8;
-	else if (!strcmp(mode_str, "NBFM"))
-		return MODE_NBFM;
-	else if (!strcmp(mode_str, "AM"))
-		return MODE_AM;
-	else if (!strcmp(mode_str, "2TONE"))
-		return MODE_2TONE;
-	else if (!strcmp(mode_str, "DIGI"))
-		return MODE_DIGITAL;
-	return -1;
-}
-*/
 
 static char *mode_name(int mode_id, char *name){
 	
@@ -1412,6 +1395,8 @@ static char *mode_name(int mode_id, char *name){
 			return strcpy(name, "AM");
 		case MODE_FT8:
 			return strcpy(name, "FT8");
+		case MODE_MSG:
+			return strcpy(name, "MSG");
 		case MODE_DIGITAL:
 			return strcpy(name, "DIGI");
 		case MODE_2TONE:
@@ -2371,6 +2356,15 @@ static void layout_ui(){
 			field_move("TX_PITCH", 600, y2-47, 73, 45);
 			field_move("SIDETONE", 675, y2-47, 73, 45);
 		break;
+		case MODE_MSG:
+			field_move("ESC", 5, y2-47, 40, 45);
+			field_move("PRESENCE", 50, y2-47, 95, 45);
+			field_move("FT8_TX1ST", 500, y2-47, 50, 45);
+			field_move("TX_PITCH", 600, y2-47, 73, 45);
+			//move out the spectrum et al
+			field_move("SPECTRUM", 360, -1000, x2-365, 70);
+			field_move("WATERFALL", 360, -1000, x2-365, y2-y1-110);
+		break;
 		case MODE_CW:
 		case MODE_CWR:
 			field_move("CONSOLE", 5, y1, 350, y2-y1-110);
@@ -2835,6 +2829,7 @@ void set_filter_high_low(int hz){
 			high = hz;
 			break;
 		case MODE_FT8:
+		case MODE_MSG:
 			low = 50;
 			high = 4000;
 			break;
@@ -2901,7 +2896,8 @@ int do_text(struct field *f, cairo_t *gfx, int event, int a, int b, int c){
 			f->value[0] = 0;
 			update_field(f);
 		}
-		else if ((a =='\n' || a == MIN_KEY_ENTER) && !strcmp(get_field("r1:mode")->value, "FT8") 
+		else if ((a =='\n' || a == MIN_KEY_ENTER) && 
+			(!strcmp(f_mode->value, "FT8") || !strcmp(f_mode->value, "MSG")) 
 			&& f->value[0] != COMMAND_ESCAPE){
 			ft8_tx(f->value, field_int("TX_PITCH"));
 			f->value[0] = 0;		
@@ -2978,6 +2974,7 @@ int do_pitch(struct field *f, cairo_t *gfx, int event, int a, int b, int c){
 				bw = field_int("BW_VOICE");
 				break;
 			case MODE_FT8:
+			case MODE_MSG:
 				bw = 4000;
 				break;	
 			default:
@@ -3234,7 +3231,7 @@ int do_macro(struct field *f, cairo_t *gfx, int event, int a, int b, int c){
 	
 		mode = get_field("r1:mode")->value;
 
-		if (!strcmp(mode, "FT8") && strlen(buff)){
+		if ((!strcmp(mode, "FT8") || !strcmp(mode, "MSG")) && strlen(buff)){
 			ft8_tx(buff, atoi(get_field("#tx_pitch")->value));
 			set_field("#text_in", "");
 			//write_console(FONT_LOG_TX, buff);
@@ -3721,10 +3718,8 @@ int key_poll(){
 
 	if (input_method == CW_IAMBIC || input_method == CW_IAMBICB){	
 		if (ptt_state == LOW)
-		//if (digitalRead(PTT) == LOW)
 			key |= CW_DASH;
 		if (dash_state == LOW)
-		//if (digitalRead(DASH) == LOW)
 			key |= CW_DOT;
 	}
 	//straight key
@@ -3981,6 +3976,7 @@ void set_radio_mode(char *mode){
 			new_bandwidth = field_int("BW_VOICE");
 			break;
 		case MODE_FT8:
+		case MODE_MSG:
 			new_bandwidth = 4000;
 			break;
 		default:
@@ -4297,6 +4293,7 @@ gboolean ui_tick(gpointer gook){
 			tick_count = 50;
 			break;
 		case MODE_FT8:
+		case MODE_MSG:
 			tick_count = 200;
 			break;
 		default:

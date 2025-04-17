@@ -396,6 +396,7 @@ void modem_rx(int mode, int32_t *samples, int count){
 	s = samples;
 	switch(mode){
 	case MODE_FT8:
+	case MODE_MSG:
 		ft8_rx(samples, count);
 		break;
 	case MODE_CW:
@@ -444,8 +445,10 @@ void modem_poll(int mode, int ticks){
 		//clear the text buffer	
 		abort_tx();
 
-		if (current_mode == MODE_FT8)
+		if (current_mode == MODE_FT8 || current_mode == MODE_MSG){
 			macro_load("FT8", NULL);
+			ft8_set_protocol(current_mode);
+		}
 		else if (current_mode == MODE_CWR || current_mode == MODE_CW){
 			macro_load("CW1", NULL);	
 			modem_set_pitch(get_pitch());
@@ -457,6 +460,7 @@ void modem_poll(int mode, int ticks){
 
 	switch(mode){
 	case MODE_FT8:
+	case MODE_MSG:
 		if (ticks % 100){
 			t = time_sbitx();
 			ft8_poll(t % 60, tx_is_on);
@@ -479,6 +483,7 @@ float modem_next_sample(int mode){
 		// the ft8 samples are generated at 12ksps, we need to feed the 
 		// sdr with 96 ksps (eight times as much)
 	case MODE_FT8: 
+	case MODE_MSG:
 			sample = ft8_next_sample();
 		break;
 	case MODE_CW:
@@ -499,6 +504,7 @@ void modem_abort(){
 
 	switch(current_mode){
 	case MODE_FT8:
+	case MODE_MSG:
 		ft8_abort();
 		break;
 	case MODE_CW:

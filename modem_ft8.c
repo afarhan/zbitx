@@ -38,6 +38,7 @@ static int	ft8_pitch = 0;
 static int	ft8_mode = FT8_SEMI;
 static pthread_t ft8_thread;
 static int ft8_tx1st = 1;
+static int ft8_protocol= 0;
 void ft8_tx(char *message, int freq);
 void ft8_interpret(char *received, char *transmit);
 extern void call_wipe();
@@ -489,6 +490,7 @@ static int sbitx_ft8_decode(float *signal, int num_samples, bool is_ft8)
           sprintf(buff, "%s %3d %+03d %-4.0f ~  %s\n", time_str, 
 						cand->score, cand->snr, freq_hz, message.text);
 
+					printf("ft8 rx: %s\n", message.text);
 
 				//message_add(char *mode, unsigned int frequency, int outgoing, char *message);
 					message_add("FT8", freq_hz, 0, message.text);
@@ -573,7 +575,7 @@ void ft8_tx(char *message, int freq){
 	//if we are not transmitting CQ, then we follow
 	//the slot selected earlier in ft8_process()
 
-	if (!strncmp(message, "CQ", 2)){ 
+	if (!strncmp(message, "CQ", 2) || message[0] == '+'){ 
 		if(!strcmp(str_tx1st, "ON"))
 			ft8_tx1st = 1;
 		else
@@ -589,7 +591,7 @@ void ft8_tx(char *message, int freq){
 		ft8_repeat = atoi(str_repeat);
 
 	// if it is a CQ message, then wait for the slot
-	if (!strncmp(ft8_tx_text, "CQ ", 3))
+	if (!strncmp(ft8_tx_text, "CQ ", 3) || ft8_tx_text[0] == '+')
 		return;
 
 	//figure out how many samples can be transmitted in this current slot
@@ -914,4 +916,9 @@ void ft8_init(){
 void ft8_abort(){
 	ft8_tx_nsamples = 0;
 	ft8_repeat = 0;
+}
+
+void ft8_set_protocol(int protocol){
+	ft8_protocol = protocol;
+	printf("ft8 modem protcol is set to %d\n", ft8_protocol);
 }
