@@ -490,7 +490,8 @@ static int sbitx_ft8_decode(float *signal, int num_samples, bool is_ft8)
           sprintf(buff, "%s %3d %+03d %-4.0f ~  %s\n", time_str, 
 						cand->score, cand->snr, freq_hz, message.text);
 
-					printf("ft8 rx: %s\n", message.text);
+					if (ft8_protocol == MODE_MSG)
+						msg_process(freq_hz, message.text);
 
 				//message_add(char *mode, unsigned int frequency, int outgoing, char *message);
 					message_add("FT8", freq_hz, 0, message.text);
@@ -652,6 +653,10 @@ void ft8_rx(int32_t *samples, int count){
 void ft8_poll(int seconds, int tx_is_on){
 	static int last_second = 0;
 
+	if (seconds % 15 == 0 && last_second != seconds){
+		msg_poll();
+	}
+
 	//if we are already transmitting, we continue 
 	//until we run out of ft8 sampels
 	if (tx_is_on){
@@ -663,7 +668,7 @@ void ft8_poll(int seconds, int tx_is_on){
 		}
 		return;
 	}
-	
+
 	if (!ft8_repeat || seconds == last_second)
 		return;
 
@@ -910,6 +915,7 @@ void ft8_init(){
 	ft8_rx_buff_index = 0;
 	ft8_tx_buff_index = 0;
 	ft8_tx_nsamples = 0;
+	msg_init();
 	pthread_create( &ft8_thread, NULL, ft8_thread_function, (void*)NULL);
 }
 

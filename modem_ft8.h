@@ -7,3 +7,9 @@ void ft8_poll(int seconds, int tx_is_on);
 float ft8_next_sample();
 void ft8_process(char *message, int operation);
 void ft8_set_protocol(int protocol); //added for messenger operation MODE_FT8 or MODE_MSG
+
+void msg_init();
+void msg_process(int freq, char *text);
+void msg_save(char *filename);
+void msg_load(char *filename);
+void msg_poll();
