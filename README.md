@@ -188,6 +188,178 @@ After building, you can run zBITX with:
 ./sbitx
 ```
 
+## Low-Level Transmission Process
+
+This section provides a detailed explanation of how the zBITX implements RF transmission at a low level, including the signal path, hardware control, and measurement systems.
+
+### Transmission Signal Path
+
+The transmission process in zBITX follows these steps:
+
+1. **Audio Input Acquisition**: 
+   - Audio samples are captured from the microphone input at 96 kHz sampling rate
+   - For digital modes (CW, FT8), the audio is generated in software
+
+2. **FFT Processing**:
+   - The audio samples are collected in a buffer of 2048 samples (MAX_BINS)
+   - The previous 1024 samples are retained for overlap processing
+   - The samples are converted to the frequency domain using FFT (Fast Fourier Transform)
+   - The `fftw_execute(plan_fwd)` function performs this transformation
+
+3. **Sideband Filtering**:
+   - The frequency domain signal is filtered according to the selected mode
+   - For USB: Frequencies below the carrier are zeroed out
+   - For LSB: Frequencies above the carrier are zeroed out
+   - For AM: Both sidebands are retained
+   - The filter is applied by multiplying with the `tx_filter->fir_coeff` array
+
+4. **Frequency Shifting**:
+   - The filtered signal is shifted to the appropriate transmit frequency
+   - This is done by rotating the FFT bins by `tx_shift` positions
+   - The result is stored in the `fft_freq` array
+
+5. **Inverse FFT**:
+   - The frequency domain signal is converted back to the time domain
+   - The `fftw_execute(r->plan_rev)` function performs this transformation
+
+6. **Output Scaling**:
+   - The time domain samples are scaled by several factors:
+     - `volume`: User-controlled volume setting
+     - `tx_amp`: Band-specific power scaling factor
+     - `alc_level`: Automatic Level Control to prevent overdriving
+
+7. **Modulation Display Update**:
+   - The `sdr_modulation_update()` function captures the modulation envelope
+   - This is used to display the modulation level in the UI
+
+### Transmit/Receive Switching
+
+The T/R (Transmit/Receive) switching process is critical for proper operation. The zBITX supports three hardware versions with different T/R mechanisms:
+
+#### SBITX_DE (Original Design)
+
+When switching to transmit mode (`tr_switch_de(1)`):
+
+1. Set RX_LINE (GPIO 16) LOW to disable receive path
+2. Mute audio output and input by setting mixer levels to 0
+3. Set `mute_count` to 20 to prevent audio glitches
+4. Reset FFT processing with `tx_process_restart = 1`
+5. Set transmit power levels with `set_tx_power_levels()`
+6. If using band relays, select appropriate low-pass filter with `set_lpf_40mhz()`
+7. Set TX_LINE (GPIO 24) HIGH to enable transmit path
+8. Reset spectrum display with `spectrum_reset()`
+
+When switching back to receive mode (`tr_switch_de(0)`):
+
+1. Set `in_tx` flag to 0
+2. Mute audio to prevent switching transients
+3. Reset FFT bins with `fft_reset_m_bins()`
+4. Set `mute_count` to prevent audio glitches
+5. Reset low-pass filter relays if used
+6. Set TX_LINE (GPIO 24) LOW to disable transmit path
+7. Restore audio mixer levels for reception
+8. Reset spectrum display
+9. Set RX_LINE (GPIO 16) HIGH to enable receive path
+
+### CW Tone Generation
+
+CW (Morse code) tones are generated entirely in software:
+
+1. **Tone Oscillator**:
+   - A virtual oscillator (`cw_tone`) is configured to the user-selected pitch (default 700 Hz)
+   - The `vfo_read(&cw_tone)` function generates a sine wave at this frequency
+
+2. **Envelope Shaping**:
+   - To prevent key clicks, the CW tone is shaped with rise and fall times
+   - A separate envelope oscillator (`cw_env`) creates a smooth envelope
+   - The envelope is applied by multiplying the tone by the envelope value
+
+3. **Timing Control**:
+   - Dot duration is set by `cw_period` (calculated from WPM setting)
+   - Dash duration is 3x dot duration
+   - Inter-element spacing is 1x dot duration
+   - Inter-character spacing is 3x dot duration
+   - Inter-word spacing is 7x dot duration
+
+4. **Keying Methods**:
+   - **Straight Key**: Directly follows the state of the key input
+   - **Iambic Mode A**: Alternates between dots and dashes
+   - **Iambic Mode B**: Similar to Mode A but with different timing behavior
+
+5. **Key Input Sources**:
+   - Hardware keys connected to GPIO pins (PTT on GPIO 7, DASH on GPIO 21)
+   - Software keying through the UI
+   - Text input that is converted to Morse code
+
+### FT8 Tone Generation
+
+FT8 uses 8-FSK (Frequency Shift Keying) modulation:
+
+1. **Message Encoding**:
+   - The text message is encoded into a 77-bit payload using `pack77()`
+   - The payload is then encoded with error correction into 79 FSK tones
+
+2. **Tone Synthesis**:
+   - Tones are generated using GFSK (Gaussian Frequency Shift Keying)
+   - The `synth_gfsk()` function creates the waveform
+   - Each symbol is 0.16 seconds long (for FT8) or 0.048 seconds (for FT4)
+   - The base frequency is configurable, with 8 possible tone frequencies
+
+3. **Timing**:
+   - Transmissions are synchronized to start at 0 or 30 seconds of each minute
+   - NTP time synchronization ensures accurate timing
+   - Total transmission time is 12.6 seconds for FT8
+
+### Power Measurement and ALC
+
+The zBITX includes a sophisticated power measurement and control system:
+
+1. **Power Bridge Reading**:
+   - Forward and reflected power are read from an I2C-connected power bridge
+   - The I2C address is 0x8, and 4 bytes are read (2 for forward, 2 for reflected)
+
+2. **SWR Calculation**:
+   - SWR (Standing Wave Ratio) is calculated from forward and reflected power
+   - The formula used is: `vswr = (10*(vfwd + vref))/(vfwd-vref)`
+   - If reflected power exceeds forward power, SWR is set to 100
+
+3. **Power Calculation**:
+   - Forward power is calculated as: `fwdpower = (fwdvoltage * fwdvoltage)/400`
+   - This gives power in 1/10th of a watt (400 = 40 watts)
+
+4. **Automatic Level Control (ALC)**:
+   - If RF voltage exceeds 135 (approximately 40W), ALC reduces the output level
+   - The `alc_level` factor is adjusted to maintain safe power levels
+   - This prevents overdriving the power amplifier
+
+5. **Band Power Calibration**:
+   - Each amateur band has a specific power scaling factor
+   - The `calibrate_band_power()` function automatically determines these factors
+   - Calibration data is stored in `hw_settings.ini`
+
+### Low-Pass Filter Selection
+
+To ensure clean output and comply with regulations, the appropriate low-pass filter is selected based on frequency:
+
+1. The `set_lpf_40mhz()` function sets GPIO pins to select the correct filter
+2. Filter selection is based on the operating frequency
+3. GPIO pins 5, 6, 10, 11, and 26 control the filter selection
+4. The filter selection occurs during the T/R switching process
+
+### Complete Transmission Sequence
+
+When the user initiates transmission (by pressing PTT, sending CW, or starting an FT8 transmission):
+
+1. The appropriate mode-specific function is called (e.g., `ft8_tx()` for FT8)
+2. The T/R switch is activated with `tr_switch(1)`
+3. The Si5351 is configured to the transmit frequency
+4. Audio samples are generated (from mic or digitally for CW/FT8)
+5. The `tx_process()` function processes these samples
+6. The processed samples are sent to the audio output
+7. Power and SWR are continuously monitored
+8. When transmission ends, `tr_switch(0)` returns to receive mode
+
+This process ensures clean, efficient transmission with appropriate filtering, power control, and timing for all supported modes.
 
 # zBITX Hardware Integration
 
@@ -424,9 +596,6 @@ The zBITX represents a sophisticated integration of software and hardware compon
 5. **Digital Modes**: Software implementation of CW and FT8/FT4
 
 This architecture provides a flexible platform that can be adapted to different hardware configurations while maintaining consistent functionality through the software layer.
-
-
-
 
 ## License
 
