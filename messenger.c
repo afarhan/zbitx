@@ -6,20 +6,27 @@
 #include <math.h>
 #include <complex.h>
 #include <fftw3.h>
+#include <ctype.h>
 #include "sdr.h"
 #include "sdr_ui.h"
 #include "modem_ft8.h"
 #include "ntputil.h"
+#include "md5.h"
 
-#define MESSAGE_BLOCK_SIZE 13
+#define BLOCK_SIZE 13
 /*
 	1. Blocks: 
 	1.1 Every message is split into one or more blocks. 
 	1.2 The messages can only have a single case, numbers, stop, comma, 
 	slash, plus and dash. (same as FT8).
 	1.3 Maximum message size is limited to 150 characters
-*/
 
+	1234567890123
+	fb,gotmail?AA
+	hi,alwl i hp+
+	 gng2del2mrAA 
+
+*/
 
 #define NOTIFICATION_PERIOD 300 //5 minutes, 300 seconds
 
@@ -33,17 +40,22 @@
 	flags field:
 	bit 1: is out_going (if 1 and 0 if incoming)
 	bit 2: completed (set if delivered and acknowledge)
-	bit 3: begining time-slot of the message (of the remote tx for incoming, of ours for outoging)
-	bit 4: to be deleted 
+	bit 3: begining time-slot of the message 
+		(of the remote tx for incoming, of ours for outoging)
+	bit 4: marked for deletion 
 	the actual message is stored as segement in the message_buffer, pointed to by *data field
 
 	The messages are allowed only a small subset of 40 ASCII characters:
 	0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./? and SPACE.
 	The data storage can be encoded even tighter to save space.
+
+	the sent message is split into multiple blocks
+	of total physical length of 13 characters each.
+
 */
 
-#define MAX_TEXT 50000
-#define MAX_MESSAGES 2000
+#define MAX_TEXT 100000
+#define MAX_MESSAGES 10000
 #define MSG_INCOMING  0x00000001
 #define MSG_COMPLETED 0x00000002
 #define MSG_DELETE 		0x00000004
@@ -54,6 +66,7 @@ struct message {
 	uint32_t time_updated;
 	uint16_t flags;
 	uint8_t length;
+	uint8_t nsent;
 	char *data;
 	struct message *next;
 };
@@ -68,7 +81,7 @@ int next_update = 0;
 #define CONTACT_FLAG_DELETE 2
 struct contact {
 	char callsign[MAX_CALLSIGN];
-	char status[10];
+	char status[MAX_CALLSIGN];
 	time_t last_update;
 	uint32_t frequency; 
 	uint32_t flags;
@@ -84,6 +97,9 @@ struct contact *contact_list = NULL;
 char my_callsign[MAX_CALLSIGN];
 char my_status[10];
 uint32_t my_frequency = 7097000;
+char selected_contact[MAX_CALLSIGN];
+
+struct contact *contact_by_callsign(const char *callsign);
 
 /**
 	Contacts/Users:
@@ -98,25 +114,30 @@ uint32_t my_frequency = 7097000;
 
 #define MAX_CONTACTS 200
 
-/* WIP
-struct contact *contact_create(char *callsign, bool save, uint32_t last_seen){
-	struct contact *new_contact = NULL;
-	//search if we find an empty slot of in the contacts book
-	for (int i = 0; i < MAX_CONTACTS; i++)
-		if (contact_book
-}
+/*
+int checksum(struct message *pm){
+	int check = 0;
 
-void contact_save(struct contact *pc, char *buff){
-	fprintf("%s|%s|%u|%u|%c\n", 
-		pc->callsign, 
-		pc->status, 
-		pc->last_update, 
-		pc->frequency, 
-		pc->saved_contact ? 'S' | 'N');
+	//the checkum is on mycallsign + contact + timestamp + key + message
+
+	while(*text){
+		for (int i = 0; i < sizeof(charset); i++)
+			if (charset[i] == *text){
+				printf("check %x %d\n", check, i);
+				check = (check << 1) ^ i;
+			};
+		text++;
+	}
+	return check;
 }
 */
 
-struct message *add_chat(struct contact *pc, char *message, int flags){
+void send_block(int freq, char *text){
+	printf("Sending at %d, on %d [%s]\n", freq, strlen(text), text);
+	ft8_tx(text, freq);
+}
+
+struct message *add_chat(struct contact *pc, const char *message, int flags){
 	struct message *m = message_block + message_free;
 
 	// time_created
@@ -130,6 +151,7 @@ struct message *add_chat(struct contact *pc, char *message, int flags){
 		return NULL;
 	m->data = text_buffer + text_free;
 	m->next = NULL;
+	m->nsent = 0;
 
 	strcpy(m->data, message);
 	text_free += m->length;
@@ -148,6 +170,7 @@ struct message *add_chat(struct contact *pc, char *message, int flags){
 		pc->m_list = m;	
 		
 	message_free++;
+	return m;
 }
 
 struct message *message_load(char *buff){
@@ -191,14 +214,36 @@ void msg_dump(){
 	struct contact *pc;
 	struct message *pm;
 
+	printf("msg dump **********\n");
 	for (pc = contact_list; pc; pc = pc->next){
 		if (pc->last_update < time_sbitx() - 100)
-			printf("%s %s\n", pc->callsign, pc->status);
+			printf("%s %s (%d)\n", pc->callsign, pc->status, pc->frequency);
 		else
-			printf("%s %s\n", pc->callsign, pc->status);
+			printf("%s %s (%d)\n", pc->callsign, pc->status, pc->frequency);
 		for (pm = pc->m_list; pm; pm = pm->next)
-			printf("   message: %d %.*s\n", 
-				(int)(pm->length), (int)(pm->length), pm->data);	
+			printf("   message: %d flag:%x  %.*s\n", 
+				(int)(pm->length), pm->flags, (int)(pm->length), pm->data);	
+	}
+}
+
+void update_chat(){
+	const char *contact = field_str("CONTACT");
+	if (!contact)
+		return;
+	if (!strcmp(contact, "LIST"))
+		return;
+			
+	struct contact *pc = contact_by_callsign(contact);
+	if (!pc)
+		return;
+
+	chat_clear();					
+	for (struct message *pm = pc->m_list; pm; pm = pm->next){
+		char message[1000];
+		sprintf(message, "%s:\n%.*s\n", 
+			pm->flags & MSG_INCOMING ? pc->callsign : field_str("MYCALLSIGN"),
+			(int)(pm->length), pm->data);	
+		chat_append(message);
 	}
 }
 
@@ -207,12 +252,25 @@ void update_contacts(){
 	struct message *pm;
 	char update_line[100];
 
+	//send a form feed to clear the console
+	update_line[0] = 12;
+	update_line[1] = 0;
+	write_console(0, update_line);
+	clear_contact_list();
+
 	for (pc = contact_list; pc; pc = pc->next){
-		if (pc->last_update < time_sbitx() - 100)
-			sprintf(update_line, "#G%s #S%s\n", pc->callsign, pc->status);
-		else
-			sprintf(update_line, "%s %s\n", pc->callsign, pc->status);
-		write_console(0, update_line);
+		if (pc->last_update > time_sbitx() - 600){
+			sprintf(update_line, "#G*%s #S%s\n", pc->callsign, pc->status);
+			write_console(0, update_line);
+			sprintf(update_line, "%s - %s", pc->callsign, pc->status);
+			add_item_to_contact_list(update_line);
+		}
+		else{
+			sprintf(update_line, "*%s %s\n", pc->callsign, pc->status);
+			write_console(0, update_line);
+			sprintf(update_line, "%s - Inactive", pc->callsign);
+			add_item_to_contact_list(update_line);
+		}
 	}
 }
 
@@ -259,7 +317,7 @@ struct contact *contact_load(const char *string){
 	return pc;
 }
 
-struct contact *contact_add(char *callsign, int frequency){
+struct contact *contact_add(const char *callsign, int frequency){
 	if (contact_free >= MAX_CONTACTS)
 			return NULL;
 	struct contact *pc = contact_block + contact_free;
@@ -273,6 +331,17 @@ struct contact *contact_add(char *callsign, int frequency){
 	return pc;
 }
 
+int block_count(int length){
+	int count = 0;
+	//the last block has 3 character long checksum
+	while(length > BLOCK_SIZE -3){
+		//each of non-last blocks has a '+' in the end
+		length -= (BLOCK_SIZE - 1);
+		count++;
+	}
+	return count;
+}
+
 void msg_init(){
 	memset(contact_block, 0, sizeof(contact_block));
 	memset(message_block, 0, sizeof(message_block));
@@ -281,9 +350,14 @@ void msg_init(){
 	message_free = 0;
  	text_free = 0;
 	contact_free = 0;	
+	selected_contact[0] = 0;
 
-	msg_process(1000, "+VU2XZ RDY");
-	msg_process(1200, "+VU2BVB AWY");
+	chat_ui_init();
+
+	printf("%d of %s\n", block_count(strlen("Hello")), "Hello");
+	printf("%d of %s\n", block_count(strlen("Hello world")), "Hello world");
+	printf("%d of %s\n", block_count(strlen("Life,Universe,Everything")), 
+		"Life,Universe,Everything");
 }
 
 void save_messenger(char *filename){
@@ -356,7 +430,7 @@ void contact_to_head(struct contact *pc){
 		}
 }
 
-struct contact *contact_by_callsign(char *callsign){
+struct contact *contact_by_callsign(const char *callsign){
 	for (struct contact *pc = contact_list; pc; pc = pc->next)
 		if (!strcmp(pc->callsign, callsign))
 			return pc;
@@ -371,70 +445,80 @@ struct contact *contact_by_frequency(int frequency){
 	return NULL;
 }
 
-struct contact *contact_by_block(int freq, char *block){
+struct contact *contact_by_block(int freq, const char *block){
 	//we will just scan the block for the callsigns
 	for (struct contact *pc = contact_list; pc; pc = pc->next)
 		if (strstr(block, pc->callsign)) 
 			return pc;
+
+	//after this we try matching the frequency
+	for (struct contact *pc = contact_list; pc; pc = pc->next)
+		if (abs(freq - pc->frequency) < 20){ 
+			printf("   matched %s with %d\n", pc->callsign, pc->frequency);
+			return pc;
+		}
+
 	return NULL;
 }
 
-void update_presence(int freq, char *notification){
+void update_presence(int freq, const char *notification){
 	char call[10];
 	int i;
 
-	for (i = 0; i < MAX_CALLSIGN-1 && *notification > ' '; i++)
+	for (i = 0; i < MAX_CALLSIGN-1 && isalnum(*notification); i++)
 		call[i] = *notification++;
 	call[i] = 0;
 		
 	notification++; //skip the space between the status and the contact
+	
 	struct contact *pc = contact_by_callsign(call); 
 	if(!pc)
 		pc = contact_add(call, freq);
 	if (!pc) //out of memory?
 		return;
-	strcpy(pc->status, notification);
+
+	strncpy(pc->status, notification, MAX_CALLSIGN-1);
+	pc->status[MAX_CALLSIGN-1] = 0;
 	pc->frequency = freq;
-	pc->last_update= time_sbitx();
+	pc->last_update= time_sbitx(); //this is being done one slot late
 	contact_to_head(pc);
 }
 
-void msg_process(int freq, char *text){
+void msg_select(char *callsign){
+	strcpy(selected_contact, callsign);
+	field_set("CONTACT", callsign);
+	printf("chatting with [%s]\n", selected_contact);
+	
+	struct contact *pc = contact_by_callsign(selected_contact);
+	if (!pc)
+		return;
+	update_chat();
+	
+}
+
+void msg_process(int freq, const char *text){
 	char call[10];
 	struct contact *pc;
 
-	/* if (!strncmp(text, "CQ ", 3)){
+	printf("msg_process: %d [%s]\n", freq, text);
+	if (!strncmp(text, "CQ ", 3)){
 		update_presence(freq, text + 3);	
 		msg_dump();
 	}
-	else */ 
-	if (*text == '+'){
+	else if (*text == '+'){
 		update_presence(freq, text + 1);	
 		msg_dump();
 		update_contacts();
 	}
 	else if (pc = contact_by_block(freq, text)){
-		add_chat(pc, text, 0);
+		add_chat(pc, text, MSG_INCOMING);
+		update_chat();
 	}
- 
-	//is it a call for us? 'W7PUA VU2ESE XD12' this is a message from als to bob (us)
-	//here, the message's checksum is XD and it has 2 segments (between 1 and 8)
-	
-	//is it on a frequency we are listening for a message
-	//is it a beacon we are interested in
-	// 'W7PUA QRV CN84' 
-
-	//is it an acknowlegment of our request to send?
-	// 'VU2ESE W7PUA XA02' (the message id XA12 contains the checkum and the block count
 }
 
-void send_block(int freq, char *text){
-	//TBD
-	ft8_tx(text, freq);
-}
 
 void send_update(){
-	if (!strcmp(my_status, "Silent"))
+	if (!strcmp(field_str("PRESENCE"), "SILENT"))
 		return;
 	char notification[20];
 	char const *presence = field_str("PRESENCE");
@@ -452,7 +536,28 @@ void send_update(){
 	else
 		strcat(notification, presence);
 
+	next_update = time_sbitx() + 92;
 	send_block(field_int("TX_PITCH"), notification);
+}
+
+int msg_post(const char *contact, const char *message){
+	if (!contact && selected_contact[0] == 0){
+		printf("No contact selected\n");	
+		return -1;
+	}
+
+	if (!contact)
+		contact= selected_contact;
+
+	struct contact *pc = contact_by_callsign(contact);	
+	if(!pc)
+		pc = contact_add(contact, 0); //we havent heard from them yet
+	if (!pc) //out of memory?
+		return -1;
+
+	struct message *pm = add_chat(pc, message, 0);
+	pm->nsent = 0;
+	return 0;
 }
 
 //this is called every 15 seconds
@@ -466,66 +571,47 @@ void msg_poll(){
 	last_tick = now;
 	if (last_tick % 15)
 		return;
+
+	printf("msg time %d\n", (int)now); 
+	//from here, we do stuff on every 15th second
+	msg_dump();
+	/* if (!strcmp(field_str("CONTACT"), "LIST"))
+		update_contacts();
+	else
+		update_chat();*/
 	update_contacts();
-	if (next_update < now){
+
+	if (next_update < now)
 		send_update();
-		next_update = last_tick + 92;
+
+	//try sending the messages only after at least one 
+	//notification update has been sent
+
+	if (!next_update)
 		return;
-	}
-/*
-	//are there any pending messages we need to retry/send?
-	if (nticks % 15 == 0){
-		for (struct contacts *pc = contact_list; pc; pc = pc->next)
-			if (!pc->m_list && (pc->m_list & MSG_IMMEDIATE){
-				send_message(pc->m_list);
-				break;
-			}
-			//we may want to send out other messages too, it could cook the PA
-	}
-*/
+
+	//check if any online contact has an outgoing message
+	struct contact *pc;
+	struct message *pm;
+	for (pc = contact_list; pc; pc = pc->next){
+		if (now - pc->last_update < 500){
+			for (pm = pc->m_list; pm; pm = pm->next){
+				if((!(pm->flags & MSG_INCOMING)) && pm->nsent < pm->length){
+					char block[BLOCK_SIZE+1];			
+
+					int nsize = pm->length - pm->nsent;
+					if (nsize > BLOCK_SIZE)
+						nsize = BLOCK_SIZE;	
+					strncpy(block, pm->data + pm->nsent, nsize);
+					block[nsize] = 0;
+					pm->nsent += nsize; 	
+					send_block(field_int("TX_PITCH"), block);
+				}
+			} // next message of the contact 
+		}
+	} // next contact
 }
 
 
 
-/// test fixtures
-
-/*
-int main(int argc, char **argv){
-	fd_set fds;
-  struct timeval ts;
-	char input[100];
-	
-  ts.tv_sec = 0; // 0 second
-  ts.tv_usec = 1000; //1 millisecond
-	input[0] = 0;
-
-	msg_init("VU2ESE");
-	strcpy(my_status, "QRV");
-	load_messenger("messenger.txt");
-	save_messenger("messenger_out.txt");
-
-	while(1){
-    FD_ZERO(&fds);
-    FD_SET(0, &fds);
- 
-    // wait for data
-    int nready = select(sock + 1, &fds, (fd_set *) 0, (fd_set *) 0, &ts);
-		if(FD_ISSET(0, &fds)) {
-    	char c = getc(stdin); //fgets(buf, 1, stdin);
-			if (c == '\n'){
-				process_user_input(input);
-				input[0] = 0;
-			}
-			else{
-				int l = strlen(input);
-				if (l >= sizeof(input)
-					continue;
-				input[l++] = c;
-				input[l] = 0;
-			}
-		
-	}
-	return 0;
-}
-*/
 

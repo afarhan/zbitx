@@ -9,7 +9,16 @@ void ft8_process(char *message, int operation);
 void ft8_set_protocol(int protocol); //added for messenger operation MODE_FT8 or MODE_MSG
 
 void msg_init();
-void msg_process(int freq, char *text);
+void msg_process(int freq, const char *text);
 void msg_save(char *filename);
 void msg_load(char *filename);
 void msg_poll();
+void msg_select(char *msg);
+int msg_post(const char *callsign, const char *message);
+void chat_ui_init();
+void clear_contact_list();
+void add_item_to_contact_list(const char *c);
+void chat_clear();
+void chat_append(const char *text);
+void msg_add_contact(const char *callsign);
+void msg_remove_contact(const char *callsign);

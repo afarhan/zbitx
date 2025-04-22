@@ -699,6 +699,8 @@ struct field main_controls[] = {
 	//MSG controls
 	{"#msg_presence", NULL, 415, 5, 40, 40, "PRESENCE", 40, "Ready", FIELD_SELECTION, FONT_FIELD_VALUE, 
 		"READY/AWAY/BUSY/SILENT/QUD/QSP/CQ", 0, 1024, 1,COMMON_CONTROL},
+	{"#msg_contact", NULL, 415, 50, 50, 50, "CONTACT", 50, "LIST", FIELD_STATIC, FONT_LOG, 
+		"nobody", 0,128,0,0},
 
 	{"#telneturl", NULL, 1000, -1000, 400, 149, "TELNETURL", 70, "dxc.nc7j.com:7373", FIELD_TEXT, FONT_SMALL, 
 		"", 0,32,1, 0},
@@ -876,7 +878,7 @@ int set_field(const char *id, const char *value){
 		strcpy(f->value, value);
 		do_control_action(f->label);
 	}
-	else if (f->value_type == FIELD_TEXT){
+	else if (f->value_type == FIELD_TEXT || f->value_type == FIELD_STATIC){
 		if (strlen(value) > f->max || strlen(value) < f->min){
 			printf("*Error: field[%s] can't be set to [%s], improper size.\n", f->cmd, value);
 			return 1;
@@ -1154,6 +1156,9 @@ void write_console(int style, char *raw_text){
 		char c = *text;
 		if (c == '\n')
 			console_init_next_line();
+		else if (c == 12){ //it if a form feed
+			console_init();
+		}
 		else if (c < 128 && c >= ' '){
 			char *p = console_stream[console_current_line].text;
 			int len = strlen(p);
@@ -1235,10 +1240,11 @@ int do_console(struct field *f, cairo_t *gfx, int event, int a, int b, int c){
 			return 1;
 		break;
 		case GDK_BUTTON_RELEASE:
-			if (!strcmp(get_field("r1:mode")->value, "FT8")){
+			if (!strcmp(f_mode->value, "FT8") || !strcmp(f_mode->value, "MSG")){
 				char ft8_message[300];
 				//strcpy(ft8_message, console_stream[console_selected_line].text);
 				hd_strip_decoration(ft8_message, console_stream[console_selected_line].text);
+				//set the contact
 				ft8_process(ft8_message, FT8_START_QSO);
 			}
 			f->is_dirty = 1;
@@ -1272,7 +1278,7 @@ void draw_field(GtkWidget *widget, cairo_t *gfx, struct field *f){
 		}
 	}
 
-	if (f_focus == f)
+	if (f_focus == f && f_focus->value_type != FIELD_STATIC)
 		fill_rect(gfx, f->x, f->y, f->width,f->height, COLOR_FIELD_SELECTED);
 	else 
 		fill_rect(gfx, f->x, f->y, f->width,f->height, COLOR_BACKGROUND);
@@ -1320,6 +1326,7 @@ void draw_field(GtkWidget *widget, cairo_t *gfx, struct field *f){
 		case FIELD_NUMBER:
 		case FIELD_TOGGLE:
 		case FIELD_BUTTON:
+		case FIELD_STATIC:
 			label_height = font_table[FONT_FIELD_LABEL].height;
 			width = measure_text(gfx, label, FONT_FIELD_LABEL);
 			//skip the underscore in the label if it is too wide
@@ -1344,9 +1351,6 @@ void draw_field(GtkWidget *widget, cairo_t *gfx, struct field *f){
 					FONT_FIELD_VALUE);
 			}
       break;
-		case FIELD_STATIC:
-			draw_text(gfx, f->x, f->y, f->label, FONT_FIELD_LABEL);
-			break;
 		case FIELD_CONSOLE:
 			//draw_console(gfx, f);
 			break;
@@ -2357,10 +2361,12 @@ static void layout_ui(){
 			field_move("SIDETONE", 675, y2-47, 73, 45);
 		break;
 		case MODE_MSG:
-			field_move("ESC", 5, y2-47, 40, 45);
-			field_move("PRESENCE", 50, y2-47, 95, 45);
+			field_move("ESC", 5, y1, 40, 45);
+			field_move("PRESENCE", 50, y1, 95, 45);
+			field_move("CONTACT", 150, y1, 95, 45);
 			field_move("FT8_TX1ST", 500, y2-47, 50, 45);
 			field_move("TX_PITCH", 600, y2-47, 73, 45);
+			field_move("CONSOLE", 5, y1+50, 350, y2-y1-55);
 			//move out the spectrum et al
 			field_move("SPECTRUM", 360, -1000, x2-365, 70);
 			field_move("WATERFALL", 360, -1000, x2-365, y2-y1-110);
@@ -2896,10 +2902,14 @@ int do_text(struct field *f, cairo_t *gfx, int event, int a, int b, int c){
 			f->value[0] = 0;
 			update_field(f);
 		}
-		else if ((a =='\n' || a == MIN_KEY_ENTER) && 
-			(!strcmp(f_mode->value, "FT8") || !strcmp(f_mode->value, "MSG")) 
+		else if ((a =='\n' || a == MIN_KEY_ENTER) && !strcmp(f_mode->value, "FT8") 
 			&& f->value[0] != COMMAND_ESCAPE){
 			ft8_tx(f->value, field_int("TX_PITCH"));
+			f->value[0] = 0;		
+		}
+		else if ((a =='\n' || a == MIN_KEY_ENTER) && !strcmp(f_mode->value, "MSG") 
+			&& f->value[0] != COMMAND_ESCAPE){
+			msg_post(NULL, f->value); //default destinatiotion is selected contact
 			f->value[0] = 0;		
 		}
 		else if (a >= ' ' && a <= 127 && strlen(f->value) < f->max-1){

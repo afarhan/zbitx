@@ -491,7 +491,7 @@ static int sbitx_ft8_decode(float *signal, int num_samples, bool is_ft8)
 						cand->score, cand->snr, freq_hz, message.text);
 
 					if (ft8_protocol == MODE_MSG)
-						msg_process(freq_hz, message.text);
+						msg_process(field_int("FREQ") + freq_hz, message.text);
 
 				//message_add(char *mode, unsigned int frequency, int outgoing, char *message);
 					message_add("FT8", freq_hz, 0, message.text);
@@ -558,8 +558,10 @@ void ft8_tx(char *message, int freq){
 	time_t	rawtime = time_sbitx();
 	struct tm *t = gmtime(&rawtime);
 
-	for (int i = 0; i < strlen(message); i++)
+	int i;
+	for (i = 0; i < strlen(message) && i < 13; i++)
 		message[i] = toupper(message[i]);
+	message[i] = 0;
 	strcpy(ft8_tx_text, message);
 
 	ft8_pitch = freq;
@@ -845,8 +847,8 @@ void ft8_process(char *message, int operation){
 	char buff[100], reply_message[100], *p;
 	int auto_respond = 0;
 
-	printf("ft8_process:%d[%s]\n", operation, message);
-
+	if (ft8_protocol == MODE_MSG)
+		msg_select(message); 
 
 	if (ft8_message_tokenize(message) == -1)
 		return;
