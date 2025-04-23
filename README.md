@@ -361,7 +361,341 @@ When the user initiates transmission (by pressing PTT, sending CW, or starting a
 
 This process ensures clean, efficient transmission with appropriate filtering, power control, and timing for all supported modes.
 
-# zBITX Hardware Integration
+## Display Update Mechanism
+
+This section provides a detailed explanation of how the zBITX implements its real-time spectrum analyzer and waterfall display, including the signal processing pipeline, UI update mechanism, and rendering components.
+
+### Overview of the Display Architecture
+
+The zBITX display system is built on GTK (GIMP Toolkit), a cross-platform widget toolkit for creating graphical user interfaces. GTK provides a comprehensive set of visual elements and drawing primitives that zBITX leverages to create its radio interface. Here's how the display architecture works:
+
+#### GTK Rendering Model
+
+GTK uses a signal-based event-driven architecture where:
+
+1. **Widget Hierarchy**: The UI is organized as a tree of widgets (containers, buttons, drawing areas, etc.)
+2. **Event Signals**: User interactions and system events trigger signals that are connected to callback functions
+3. **Drawing Model**: GTK uses Cairo, a 2D graphics library, for all rendering operations
+4. **Invalidation-Based Rendering**: Rather than continuously redrawing the screen, GTK uses an invalidation model where only areas that need updating are redrawn
+
+#### zBITX's GTK Implementation
+
+In zBITX, the display system is implemented as follows:
+
+1. **Main Window**: Created in `ui_init()` within `sbitx_gtk.c`, this is the top-level container for all UI elements
+2. **Drawing Area**: A GTK widget that provides a canvas for custom drawing with Cairo
+3. **Field System**: zBITX implements a custom "field" abstraction on top of GTK, where each UI element (spectrum, waterfall, buttons, etc.) is represented as a field with properties like position, size, and drawing functions
+4. **Event Handling**: User interactions are captured through GTK event handlers like `on_mouse_press()`, `on_key_press()`, and `on_draw_event()`
+5. **Periodic Updates**: A GTK timer (`g_timeout_add()`) calls the `ui_tick()` function periodically to handle time-based updates
+
+The main GTK drawing cycle works as follows:
+
+```
+User/System Event → GTK Signal → Callback Function → Invalidate Region → GTK Redraws Region
+```
+
+For the spectrum and waterfall displays, this cycle is:
+
+```
+Audio Data → FFT Processing → Update Data Structures → Mark Field as Dirty → ui_tick() → invalidate_rect() → GTK Redraw → draw_spectrum()/draw_waterfall()
+```
+
+The key advantage of this architecture is efficiency - only the parts of the screen that need updating are redrawn, which is crucial for a real-time application like an SDR interface.
+
+### 1. Signal Processing Pipeline
+
+#### 1.1 Audio Sample Collection
+
+The display update process begins with audio sample collection in the `sound_process()` function in `sbitx.c`. This function acts as a router that directs the audio processing flow:
+
+```c
+void sound_process(int32_t *input_rx, int32_t *input_mic, 
+                  int32_t *output_speaker, int32_t *output_tx, 
+                  int n_samples) {
+    if (in_tx)
+        tx_process(input_rx, input_mic, output_speaker, output_tx, n_samples);
+    else
+        rx_linear(input_rx, input_mic, output_speaker, output_tx, n_samples);
+}
+```
+
+In receive mode, the `rx_linear()` function processes incoming audio samples and initiates the FFT processing that ultimately feeds the spectrum display.
+
+#### 1.2 FFT Processing
+
+The Fast Fourier Transform (FFT) is the core mathematical operation that converts time-domain audio samples into frequency-domain data for the spectrum display. This process involves:
+
+1. **Sample Windowing**: The incoming audio samples are multiplied by a Hann window function to reduce spectral leakage.
+2. **FFT Execution**: The windowed samples are processed by FFTW (Fastest Fourier Transform in the West) library.
+3. **Spectrum Data Generation**: The raw FFT output is converted to a format suitable for display.
+
+The key code in `rx_linear()` that initiates this process is:
+
+```c
+// Apply window function to input samples
+for (int i = 0; i < MAX_BINS; i++) {
+    __real__ fft_in[i] = input_rx[i] * spectrum_window[i];
+    __imag__ fft_in[i] = 0;
+}
+
+// Execute FFT
+my_fftw_execute(plan_spectrum);
+
+// Update spectrum display data
+spectrum_update();
+```
+
+#### 1.3 Spectrum Data Generation
+
+The `spectrum_update()` function in `sbitx.c` processes the raw FFT data to make it suitable for display:
+
+```c
+void spectrum_update() {
+    for (int i = 1269; i < 1803; i++) {
+        // Apply exponential averaging for smoother display updates
+        fft_bins[i] = ((1.0 - spectrum_speed) * fft_bins[i]) + 
+            (spectrum_speed * cabs(fft_spectrum[i]));
+
+        // Convert to dB scale for display
+        int y = power2dB(cnrmf(fft_bins[i])); 
+        spectrum_plot[i] = y;
+    }
+}
+```
+
+This function:
+- Uses a subset of FFT bins (1269-1803) that correspond to the frequency range of interest
+- Applies exponential averaging with a configurable `spectrum_speed` parameter to smooth display updates
+- Converts magnitude values to decibels for better visualization
+- Stores the results in the `spectrum_plot` array, which is used by the UI rendering code
+
+### 2. UI Update Mechanism
+
+#### 2.1 The UI Tick Function
+
+The core of the display update mechanism is the `ui_tick()` function in `sbitx_gtk.c`. This function is called periodically (every millisecond) and handles various UI updates:
+
+```c
+gboolean ui_tick(gpointer gook) {
+    int static ticks = 0;
+    ticks++;
+    
+    // Process remote commands...
+    
+    // Update dirty UI fields
+    for (struct field *f = active_layout; f->cmd[0] > 0; f++) {
+        if (f->is_dirty) {
+            if (f->y >= 0) {
+                invalidate_rect(f->x, f->y, f->width, f->height);
+            }
+        }
+    }
+    
+    // Periodic updates (every tick_count ticks)
+    if (ticks >= tick_count) {
+        // Update spectrum and waterfall displays
+        struct field *f = get_field("spectrum");
+        update_field(f);
+        f = get_field("waterfall");
+        update_field(f);
+        
+        ticks = 0;
+    }
+    
+    return TRUE;
+}
+```
+
+The update frequency is adjusted based on the current mode:
+- CW/CWR modes: 50ms (20 updates per second)
+- FT8 mode: 200ms (5 updates per second)
+- Other modes: 100ms (10 updates per second)
+
+#### 2.2 Field Invalidation Mechanism
+
+The zBITX UI uses a field-based system where each UI element is represented by a "field" structure. When a field needs to be redrawn, its `is_dirty` flag is set, and the UI tick function will invalidate the corresponding rectangle on the screen:
+
+```c
+void invalidate_rect(int x, int y, int width, int height) {
+    GdkRectangle r = {x, y, width, height};
+    gdk_window_invalidate_rect(gtk_widget_get_window(window), &r, FALSE);
+}
+```
+
+This triggers the GTK rendering system to redraw that portion of the screen.
+
+#### 2.3 Thread Safety Considerations
+
+Since GTK is not thread-safe, the display update mechanism is designed to handle thread synchronization properly. The `redraw()` function is called from other threads to request a UI update:
+
+```c
+void redraw() {
+    struct field *f;
+    f = get_field("#console");
+    f->is_dirty = 1;
+    f = get_field("#text_in");
+    f->is_dirty = 1;
+}
+```
+
+This function only sets the `is_dirty` flags, and the actual invalidation and redrawing happen in the main UI thread via the `ui_tick()` function.
+
+### 3. Rendering Components
+
+#### 3.1 Spectrum Display
+
+The spectrum display is rendered by the `draw_spectrum()` function in `sbitx_gtk.c`. This function:
+
+1. Clears the spectrum area
+2. Draws the filter bandwidth indicator (showing the current receiver passband)
+3. Draws the spectrum grid with frequency markers
+4. Plots the spectrum data as a continuous line
+5. Draws the tuning needle and pitch indicators
+6. Draws the S-meter
+
+The key part that renders the actual spectrum data is:
+
+```c
+// Start the plot
+cairo_set_source_rgb(gfx, palette[SPECTRUM_PLOT][0], 
+    palette[SPECTRUM_PLOT][1], palette[SPECTRUM_PLOT][2]);
+cairo_move_to(gfx, f->x + f->width, f->y + grid_height);
+
+float x = 0;
+for (i = starting_bin; i <= ending_bin; i++) {
+    int y;
+    
+    // Calculate y-coordinate based on spectrum amplitude
+    y = ((spectrum_plot[i] + waterfall_offset) * f->height)/80; 
+    
+    // Limit y inside the spectrum display box
+    if (y < 0)
+        y = 0;
+    if (y > f->height)
+        y = f->height - 1;
+        
+    // Draw line to this point
+    cairo_line_to(gfx, f->x + f->width - (int)x, f->y + grid_height - y);
+    
+    // Fill the waterfall data
+    for (int k = 0; k <= 1 + (int)x_step; k++)
+        wf[k + f->width - (int)x] = (y * 100)/grid_height;
+        
+    x += x_step;
+}
+
+cairo_stroke(gfx);
+```
+
+This code maps the spectrum data to screen coordinates and draws a line connecting all the data points. It also simultaneously fills the `wf` array with data for the waterfall display.
+
+#### 3.2 Waterfall Display
+
+The waterfall display is rendered by the `draw_waterfall()` function in `sbitx_gtk.c`. This function:
+
+1. Shifts the existing waterfall data down by one row
+2. Fills the top row with new data from the `wf` array
+3. Maps the data values to colors using a temperature-like color scheme (blue→cyan→green→yellow→red)
+4. Renders the waterfall image using a GDK pixbuf
+
+```c
+void draw_waterfall(struct field *f, cairo_t *gfx) {
+    if (in_tx) {
+        draw_tx_meters(f, gfx);
+        return;
+    }
+    
+    // Shift existing waterfall data down
+    memmove(waterfall_map + f->width * 3, waterfall_map, 
+        f->width * (f->height - 1) * 3);
+    
+    // Fill top row with new data and map to colors
+    int index = 0;
+    for (int i = 0; i < f->width; i++) {
+        int v = wf[i] * 2;
+        if (v > 100)
+            v = 100;
+            
+        // Map value to color (blue→cyan→green→yellow→red)
+        if (v < 20) {                  // r = 0, g= 0, increase blue
+            waterfall_map[index++] = 0;
+            waterfall_map[index++] = 0;
+            waterfall_map[index++] = v * 12; 
+        }
+        else if (v < 40) {            // r = 0, increase g, blue is max
+            waterfall_map[index++] = 0;
+            waterfall_map[index++] = (v - 20) * 12;
+            waterfall_map[index++] = 255; 
+        }
+        // ... other color ranges ...
+    }
+    
+    // Render the waterfall image
+    gdk_cairo_set_source_pixbuf(gfx, waterfall_pixbuf, f->x, f->y);        
+    cairo_paint(gfx);
+    cairo_fill(gfx);
+}
+```
+
+The waterfall display provides a time-history view of the spectrum, with the most recent data at the top and older data scrolling downward.
+
+#### 3.3 S-Meter Display
+
+The S-meter is rendered by the `draw_smeter()` function in `sbitx_gtk.c`. It:
+
+1. Gets the current S-meter value from the SDR core
+2. Separates the value into S-units and additional dB
+3. Draws colored boxes representing the S-meter scale (green for normal signal levels, red for strong signals)
+4. Adds labels below the boxes showing S-unit values (S1, S3, S5, S7, S9, S9+20dB)
+
+The S-meter value is calculated in the `calculate_s_meter()` function in `sbitx.c`, which converts the signal power to the standard S-unit scale used in amateur radio.
+
+### 4. Data Flow Between Components
+
+The complete data flow for the display update mechanism is:
+
+1. **Audio Samples Collection**:
+   - `sound_process()` receives audio samples
+   - Routes to `rx_linear()` in receive mode
+
+2. **FFT Processing**:
+   - `rx_linear()` applies window function to samples
+   - Executes FFT via `my_fftw_execute(plan_spectrum)`
+   - Calls `spectrum_update()` to process FFT data
+
+3. **Spectrum Data Generation**:
+   - `spectrum_update()` applies averaging to FFT data
+   - Converts to dB scale
+   - Stores in `spectrum_plot` array
+
+4. **UI Update Triggering**:
+   - `ui_tick()` periodically calls `update_field()` for spectrum and waterfall
+   - Sets dirty flags and invalidates screen regions
+
+5. **Rendering**:
+   - GTK drawing system calls `on_draw_event()`
+   - `redraw_main_screen()` is called
+   - Calls appropriate drawing functions for each field
+   - `draw_spectrum()` renders spectrum using `spectrum_plot` data
+   - `draw_waterfall()` renders waterfall using `wf` data
+
+### 5. Performance Considerations
+
+The display update mechanism includes several optimizations:
+
+1. **Exponential Averaging**: The `spectrum_speed` parameter controls how quickly the spectrum display responds to changes, balancing responsiveness against visual stability.
+
+2. **Selective FFT Bin Processing**: Only a subset of FFT bins (1269-1803) are processed, focusing on the frequency range of interest.
+
+3. **Dirty Flag System**: Only UI elements that have changed are redrawn, reducing CPU usage.
+
+4. **Variable Update Rate**: The update frequency is adjusted based on the current mode (CW: 50ms, FT8: 200ms, others: 100ms).
+
+5. **Thread Safety**: The redraw mechanism is designed to work safely with GTK's single-threaded nature, using flags to request updates from other threads.
+
+The zBITX display update mechanism demonstrates good software engineering practices, including separation of concerns (signal processing vs. UI rendering), efficient memory usage, and appropriate threading considerations for real-time performance.
+
+## Hardware Integration
 
 This document provides detailed information about the hardware integration in the zBITX software-defined radio (SDR) system, including the chips used, GPIO connections, and how digital modes like CW and FT8 are implemented.
 
@@ -596,6 +930,146 @@ The zBITX represents a sophisticated integration of software and hardware compon
 5. **Digital Modes**: Software implementation of CW and FT8/FT4
 
 This architecture provides a flexible platform that can be adapted to different hardware configurations while maintaining consistent functionality through the software layer.
+
+## Supported Hardware Versions
+
+The zBITX software supports multiple hardware versions with different configurations. The software automatically detects the hardware version during initialization or reads it from the configuration file.
+
+### Hardware Version Detection
+
+The software identifies the hardware version in the following ways:
+1. Reading from the `hw_settings.ini` file if available
+2. If not specified in settings, attempting I2C communication with address 0x8:
+   - If communication fails, it assumes SBITX_DE (version 0)
+   - If communication succeeds, it assumes SBITX_V2 (version 1)
+
+### Version Differences
+
+The zBITX software supports three main hardware versions:
+
+#### 1. SBITX_DE (Version 0)
+
+This is the original "Direct Ethernet" version of the hardware.
+
+**Key characteristics:**
+- Uses a simpler T/R (transmit/receive) switching mechanism
+- RX_LINE and TX_LINE GPIO pins control the T/R switching
+- During T/R transitions:
+  - First mutes audio
+  - Switches RX_LINE low
+  - Delays for debounce
+  - Switches TX_LINE high
+  - Sets appropriate low-pass filter
+- Uses 4 low-pass filters (LPF_A through LPF_D) for different frequency bands
+
+#### 2. SBITX_V2 (Version 1)
+
+This is the second generation of the hardware.
+
+**Key characteristics:**
+- Uses the low-pass filters to cut feedback during T/R transitions
+- Different T/R switching sequence:
+  - First turns off all LPFs
+  - Mutes audio
+  - Switches TX_LINE high
+  - Delays for switching
+  - Sets appropriate low-pass filter
+- Same 4 low-pass filters as V0
+
+#### 3. SBITX_V4 (Version 4)
+
+This is the latest version with more sophisticated hardware.
+
+**Key characteristics:**
+- Uses separate lines for RX and TX powering
+- Adds an additional low-pass filter (LPF_E)
+- Different T/R switching sequence:
+  - Switches RX_LINE low
+  - Turns off all LPFs
+  - Delays for switching
+  - Sets appropriate low-pass filter
+  - Switches TX_LINE high
+- Modified low-pass filter frequency ranges:
+  - LPF_D: < 5.5 MHz
+  - LPF_C: 5.5-10.5 MHz
+  - LPF_B: 10.5-21.5 MHz (different from V0/V2)
+  - LPF_A: 21.5-30 MHz
+  - LPF_E: Additional filter used in V4
+
+### Low-Pass Filter Configuration
+
+The low-pass filters are selected based on the operating frequency:
+
+```
+if (frequency < 5500000)
+    lpf = LPF_D;
+else if (frequency < 10500000)        
+    lpf = LPF_C;
+else if (frequency < 21500000 && sbitx_version >= 4)
+    lpf = LPF_B;
+else if (frequency < 18500000)        
+    lpf = LPF_B;
+else if (frequency < 30000000) 
+    lpf = LPF_A;
+```
+
+Note that V4 has a different frequency range for LPF_B compared to earlier versions.
+
+## Development Environment Requirements
+
+The zBITX software is designed specifically for the Raspberry Pi hardware platform and has several hardware-specific dependencies that make development on a standard Linux machine challenging.
+
+### Raspberry Pi Dependencies
+
+1. **WiringPi Library**: The software extensively uses the WiringPi library for GPIO control, which is specific to Raspberry Pi. This is used for:
+   - Controlling GPIO pins for T/R switching
+   - Managing I2C communication with the Si5351 clock generator
+   - Reading encoder inputs and switches
+   - Interrupt handling for user inputs
+
+2. **AudioInjector Sound Card**: The software is designed to work with the WM8731 audio codec via the AudioInjector sound card, which requires specific hardware configuration.
+
+3. **I2C Hardware**: The software communicates with Si5351 clock generators and other I2C devices using Raspberry Pi's I2C interface.
+
+4. **GPIO Pin Configuration**: The software expects specific GPIO pin configurations as defined in the installation instructions.
+
+### Development Options
+
+Based on the examination of the codebase, there is no built-in simulation or emulation mode that would allow development on a standard Linux machine without the required hardware. The software does not have:
+
+1. Hardware abstraction layers that would allow mock implementations
+2. Conditional compilation options for development without hardware
+3. Simulation modes for testing without physical hardware
+
+### Potential Development Approaches
+
+If you need to develop or modify the zBITX software, the following approaches are possible:
+
+1. **Raspberry Pi Development**: The most straightforward approach is to develop directly on a Raspberry Pi with the required hardware components.
+
+2. **Remote Development**: Set up a Raspberry Pi with the hardware and develop remotely using SSH or remote development tools.
+
+3. **Custom Hardware Abstraction**: For experienced developers, it might be possible to create a hardware abstraction layer that mocks the WiringPi and hardware interfaces, but this would require significant effort and is not supported by the existing codebase.
+
+### Required Development Tools
+
+To build the zBITX software, you need:
+
+1. GCC compiler and standard build tools
+2. GTK3 development libraries
+3. ALSA audio libraries
+4. FFTW3 library for FFT processing
+5. SQLite3 for database functionality
+6. WiringPi library for GPIO control
+7. NCurses for terminal UI elements
+
+The build command (from the `build` script) shows these dependencies:
+
+```bash
+gcc -g -o sbitx *.c ft8_lib/ft8_lib.a -lwiringPi -lasound -lm -lfftw3 -lfftw3f -pthread -lncurses -lsqlite3 -lgtk-3 -lgdk-3 -lpangocairo-1.0 -lpango-1.0 -latk-1.0 -lcairo-gobject -lcairo -lgdk_pixbuf-2.0 -lgio-2.0 -lgobject-2.0 -lglib-2.0
+```
+
+In conclusion, while the zBITX software can be built on any Linux system with the required libraries, actual development and testing require a Raspberry Pi with the appropriate hardware components due to the direct hardware dependencies in the codebase.
 
 ## License
 
