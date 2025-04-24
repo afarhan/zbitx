@@ -766,6 +766,7 @@ void cw_poll(int bytes_available, int tx_is_on){
 	// of we are in the middle of symbol (dah/dit) transmission 
 
 	if (!tx_is_on && (cw_bytes_available || key_poll() || (symbol_next && *symbol_next)) > 0){
+		//cw_tx_get_sample();
 		tx_on(TX_SOFT);
 		millis_now = millis();
 		cw_tx_until = get_cw_delay() + millis_now;

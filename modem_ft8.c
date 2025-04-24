@@ -559,7 +559,7 @@ void ft8_tx(char *message, int freq){
 	struct tm *t = gmtime(&rawtime);
 
 	int i;
-	for (i = 0; i < strlen(message) && i < 13; i++)
+	for (i = 0; i < strlen(message); i++)
 		message[i] = toupper(message[i]);
 	message[i] = 0;
 	strcpy(ft8_tx_text, message);
@@ -655,7 +655,7 @@ void ft8_rx(int32_t *samples, int count){
 void ft8_poll(int seconds, int tx_is_on){
 	static int last_second = 0;
 
-	if (seconds % 15 == 0 && last_second != seconds){
+	if (seconds % 15 == 0 && last_second != seconds && ft8_protocol == MODE_MSG){
 		msg_poll();
 	}
 

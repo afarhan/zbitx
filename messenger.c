@@ -134,7 +134,7 @@ int checksum(struct message *pm){
 
 void send_block(int freq, char *text){
 	printf("Sending at %d, on %d [%s]\n", freq, strlen(text), text);
-	ft8_tx(text, freq);
+	//ft8_tx(text, freq);
 }
 
 struct message *add_chat(struct contact *pc, const char *message, int flags){

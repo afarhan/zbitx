@@ -213,7 +213,7 @@ int console_current_line = 0;
 int	console_selected_line = -1;
 struct Queue q_web;
 
-static uint8_t zbitx_available = 0;
+uint8_t zbitx_available = 0;
 int update_logs = 0;
 #define ZBITX_I2C_ADDRESS 0xa
 void zbitx_init();
@@ -3569,23 +3569,16 @@ static gboolean on_key_press (GtkWidget *widget, GdkEventKey *event, gpointer us
 }
 
 static gboolean on_scroll (GtkWidget *widget, GdkEventScroll *event, gpointer data) {
+	static int count = 0;
 
 	if (f_focus){
 		if (event->direction == 0){
-     if (!strcmp(get_field("reverse_scrolling")->value, "ON")){
-	  		edit_field(f_focus, MIN_KEY_DOWN);
-      } else {
-		  	edit_field(f_focus, MIN_KEY_UP);
-      }
+		 	edit_field(f_focus, MIN_KEY_UP);
 		} else {
-      if (!strcmp(get_field("reverse_scrolling")->value, "ON")){
-			  edit_field(f_focus, MIN_KEY_UP);
-      } else {
 			  edit_field(f_focus, MIN_KEY_DOWN);
-      }
    }
 	}
-		
+	return TRUE;		
 }
 
 
@@ -3699,9 +3692,13 @@ void init_gpio_pins(){
 	pullUpDnControl(DASH, PUD_UP);
 }
 
+/* this routine is called on every sample of the SDR
+   it should neither call any other function nor 
+	 should it loop in any way.
+*/
 int key_poll(){
 	int key = CW_IDLE;
-	//int input_method = get_cw_input_method();
+	//this is rare
 	if (cw_input == NULL){
 		printf("cw_input field must point to the CW_INPUT field\n");
 		return 0;
@@ -4114,12 +4111,14 @@ void zbitx_poll(int all){
 				e = i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', strlen(buff), buff);
 				if (!e){
 					if (retry < 3)
-						printf("Sucess on %d\n", retry);
+						printf("zbitx update success on %d\n", retry);
 					break;
+				
 				}
 				delay(3);
 				printf("Retrying I2C %d\n", retry);
 			}while(retry--);
+			//printf("sent %d %d :%s\n", f->updated_at, last_update, buff);
 			f->update_remote = 0;
 			count++;
 			delay(10);
@@ -4229,10 +4228,15 @@ void try_ntp(){
 		next_sync = millis() + 30000;
 }
 
+unsigned int last_tick = 0;
 gboolean ui_tick(gpointer gook){
 	int static ticks = 0;
 
 	ticks++;
+
+	unsigned int tick_now = millis();
+//	printf("ui_tick time elapsed: %d\n", tick_now - last_tick);
+	last_tick = tick_now;
 
 	while (q_length(&q_remote_commands) > 0){
 		//read each command until the 
@@ -4291,11 +4295,6 @@ gboolean ui_tick(gpointer gook){
 
  	modem_poll(mode_id(f_mode->value), ticks);
 
-/*
-	if (ticks % 20 == 0){
-	}
-*/
-
 	int tick_count = 50;
 	switch(mode_id(f_mode->value)){
 		case MODE_CW:
@@ -4314,8 +4313,10 @@ gboolean ui_tick(gpointer gook){
 		char response[6], cmd[10];
 		cmd[0] = 1;
 
+/*
 		if (zbitx_available)
 			zbitx_poll(0);
+*/
 
 		try_ntp();
 
@@ -5143,7 +5144,7 @@ void cmd_exec(char *cmd){
 				*p = toupper(*p);
 			if(set_field(f->cmd, args)) {
 				write_console(FONT_LOG, "Invalid setting:");
-			} else {
+			} else if (f->y > 0){
 						//this is an extract from focus_field()
 						//it shifts the focus to the updated field
 						//without toggling/jumping the value 

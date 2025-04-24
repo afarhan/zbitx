@@ -12,6 +12,9 @@
 #include "logbook.h"
 #include "hist_disp.h"
 
+extern uint8_t zbitx_available;
+void zbitx_poll(int all);
+
 static const char *s_listen_on = "ws://0.0.0.0:8080";
 static char s_web_root[1000];
 static char session_cookie[100];
@@ -220,7 +223,14 @@ static void fn(struct mg_connection *c, int ev, void *ev_data, void *fn_data) {
 void *webserver_thread_function(void *server){
   mg_mgr_init(&mgr);  // Initialise event manager
   mg_http_listen(&mgr, s_listen_on, fn, NULL);  // Create HTTP listener
-  for (;;) mg_mgr_poll(&mgr, 1000);             // Infinite event loop
+  for (;;){ 
+		mg_mgr_poll(&mgr, 100);             // Infinite event loop
+		if (zbitx_available){
+			//unsigned int start = millis();
+			zbitx_poll(0); 
+			//printf("zbitx_polled for %d\n", millis() - start);
+		}
+	}
 	printf("exiting webserver thread\n");
 }
 

@@ -212,11 +212,10 @@ void on_contact_selected(GtkListBox *box, GtkListBoxRow *row, gpointer ud){
 }
 
 void chat_ui_init(){
-   /* Create main window */
+
 	 chat_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
    gtk_window_set_title(GTK_WINDOW(chat_window), "HF Messenger");
    gtk_window_set_default_size(GTK_WINDOW(chat_window), 600, 400);
-   g_signal_connect(chat_window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
    /* Create a vertical box to hold the header bar and the main content */
    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
