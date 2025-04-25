@@ -2368,8 +2368,8 @@ static void layout_ui(){
 			field_move("TX_PITCH", 600, y2-47, 73, 45);
 			field_move("CONSOLE", 5, y1+50, 350, y2-y1-55);
 			//move out the spectrum et al
-			field_move("SPECTRUM", 360, -1000, x2-365, 70);
-			field_move("WATERFALL", 360, -1000, x2-365, y2-y1-110);
+			field_move("SPECTRUM", 360, y1, x2-365, 70);
+			field_move("WATERFALL", 360, y1+100, x2-365, y2-y1-110);
 		break;
 		case MODE_CW:
 		case MODE_CWR:

@@ -70,12 +70,23 @@ void chat_clear() {
 
 /* Appends new text (followed by a newline) to the text view widget. */
 void chat_append(const char *new_text) {
+		printf("chat adding %s\n", new_text);
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
     GtkTextIter end_iter;
     gtk_text_buffer_get_end_iter(buffer, &end_iter);
     gtk_text_buffer_insert(buffer, &end_iter, new_text, -1);
     gtk_text_buffer_insert(buffer, &end_iter, "\n", -1);
 }
+
+/*
+void chat_scroll_to_end(){
+  GtkTextIter end_iter;
+
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+  gtk_text_buffer_get_end_iter(buffer, &end_iter);
+	gtk_text_view_scroll_mark_onscreen(GTK_TEXT_VIEW(text_view), 	
+}
+*/
 
 /* --- Dialog Function for Adding Contacts --- */
 
@@ -216,6 +227,21 @@ void chat_ui_init(){
 	 chat_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
    gtk_window_set_title(GTK_WINDOW(chat_window), "HF Messenger");
    gtk_window_set_default_size(GTK_WINDOW(chat_window), 600, 400);
+
+   GtkCssProvider *provider = gtk_css_provider_new();
+   gtk_css_provider_load_from_data(provider,
+       "window { background-color: #2e2e2e; }"
+       "headerbar { background-color: #1e1e1e; color: #c0c0c0; }"
+       "button { background-color: #444444; color: #c0c0c0; }"
+       "entry { background-color: #444444; color: #c0c0c0; }"
+       "textview { background-color: #444444; color: #c0c0c0; }"
+       "list-row { background-color: #444444; color: #c0c0c0; }"
+       "label { background-color: #444444; color: #00c0c0; }",
+        -1, NULL);
+   gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
+       GTK_STYLE_PROVIDER(provider),
+       GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+   g_object_unref(provider);
 
    /* Create a vertical box to hold the header bar and the main content */
    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
