@@ -131,7 +131,8 @@ int checksum(struct message *pm){
 */
 
 void send_block(int freq, char *text){
-	printf("Sending at %d, on %d [%s]\n", freq, strlen(text), text);
+	printf("Sending(%u) at %d, on %d [%s]\n", time_sbitx(), freq, strlen(text), text);
+	fflush(stdout);
 	ft8_tx(text, freq);
 }
 
@@ -154,8 +155,9 @@ void send_update(){
 	else
 		strcat(notification, presence);
 
-	next_update = time_sbitx() + 90 + ((rand() % 2) * 15);
+	next_update = time_sbitx() + 120 + ((rand() % 2) * 15);
 	printf("Next in %d seconds\n", next_update - time_sbitx());
+	fflush(stdout);
 	send_block(field_int("TX_PITCH"), notification);
 }
 
@@ -365,7 +367,7 @@ void msg_init(){
 	chat_ui_init();
 	contact_add("VU2XZ", 7074600);
 	contact_add("VU2ESE", 7075000);	
-	send_update();
+	//send_update();
 	update_contacts();
 }
 
@@ -554,7 +556,8 @@ void msg_poll(){
 	time_t now = time_sbitx();
 	if (now == last_tick)
 		return;
-	
+
+	printf("time_sbitx %u\n", now);	
 	if (refresh_chat)
 		update_chat();
 
@@ -562,8 +565,6 @@ void msg_poll(){
 		update_contacts();
 
 	last_tick = now;
-	if (last_tick % 15)
-		return;
 
 	printf("msg time %d\n", (int)now); 
 	//from here, we do stuff on every 15th second
@@ -573,8 +574,10 @@ void msg_poll(){
 	else
 		update_chat();*/
 
-	if (next_update < now)
+	if (next_update < now){
+		printf("sending update %u vs %u\n", next_update, now);
 		send_update();
+	}
 
 	struct contact *pc = contact_by_callsign("VU2XZ");
 	if (pc){
@@ -593,7 +596,7 @@ void msg_poll(){
 	//check if any online contact has an outgoing message
 	struct message *pm;
 	for (pc = contact_list; pc; pc = pc->next){
-		if (now - pc->last_update < 500){
+		if (now - pc->last_update < 600){
 			for (pm = pc->m_list; pm; pm = pm->next){
 				if((!(pm->flags & MSG_INCOMING)) && pm->nsent < pm->length){
 					char block[BLOCK_SIZE+1];			

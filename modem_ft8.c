@@ -587,9 +587,10 @@ void ft8_tx(char *message, int freq){
 
 	//no repeat for '73'
 	int msg_length = strlen(message);
-	if (msg_length > 3 && !strcmp(message + msg_length - 3, " 73")){
+	if (ft8_protocol == MODE_MSG)
 		ft8_repeat = 1;
-	} 
+	else if (msg_length > 3 && !strcmp(message + msg_length - 3, " 73"))
+		ft8_repeat = 1;
 	else
 		ft8_repeat = atoi(str_repeat);
 
