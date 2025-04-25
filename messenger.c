@@ -14,6 +14,7 @@
 #include "md5.h"
 
 #define BLOCK_SIZE 13
+#define MAX_MESSAGE 150
 /*
 	1. Blocks: 
 	1.1 Every message is split into one or more blocks. 
@@ -54,19 +55,19 @@
 
 */
 
-#define MAX_TEXT 100000
-#define MAX_MESSAGES 10000
-#define MSG_INCOMING  0x00000001
-#define MSG_COMPLETED 0x00000002
-#define MSG_DELETE 		0x00000004
-#define MSG_IMMEDIATE 0x00000008
+#define MSG_INCOMING  		0x00000001
+#define MSG_COMPLETED 		0x00000002
+#define MSG_DELETE 				0x00000004
+#define MSG_ACKNOWLEDGED  0x00000008
 
+#define MAX_MSG_LENGTH (52)
 struct message {
 	uint32_t time_created;
 	uint32_t time_updated;
 	uint16_t flags;
+	int16_t nsent;
 	uint8_t length;
-	uint8_t nsent;
+	uint8_t state;
 	struct message *next;
 	char data[1];
 };
@@ -130,10 +131,47 @@ int checksum(struct message *pm){
 }
 */
 
+
+static const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./? ";
+
+void make_header(char *recepient, char *message, char *output){
+	char msg_local[MAX_MESSAGE];
+	int i = 0;
+  MD5Context ctx;
+
+  md5Init(&ctx);
+
+	for (i = 0; i < strlen(message); i++){
+		if (isalnum(message[i]) || message[i] == '+' || 
+		message[i] == '-' || message[i] == '.' ||
+		message[i] == '/' || message[i] == '?' ||
+		message[i] == ' ')
+			msg_local[i] = toupper(message[i]);
+		else
+			msg_local[i] = '?';
+	}
+	msg_local[i] = 0;  
+
+	const char *mycall = field_str("MYCALLSIGN");
+  md5Update(&ctx, (uint8_t *)mycall, strlen(mycall));
+  md5Update(&ctx, (uint8_t *)recepient, strlen(recepient));
+  md5Update(&ctx, (uint8_t *)message, strlen(message));
+  md5Finalize(&ctx);
+
+	char check[3];
+	check[0] = 'A' + (ctx.digest[0] & 0xf);
+	check[1] = 'A' + (ctx.digest[1] & 0xf);
+	check[2] = 0; 
+
+	int block_count = (strlen(message) + BLOCK_SIZE - 1)/BLOCK_SIZE;
+	sprintf(output, "%s %s %s%d0", recepient, mycall, check, block_count); 	
+}
+
 void send_block(int freq, char *text){
-	printf("Sending(%u) at %d, on %d [%s]\n", time_sbitx(), freq, strlen(text), text);
+	printf("Sending %s\n", text);
+	//printf("Sending(%u) at %d, on %d [%s]\n", time_sbitx(), freq, strlen(text), text);
 	fflush(stdout);
-	ft8_tx(text, freq);
+	//ft8_tx(text, freq);
 }
 
 void send_update(){
@@ -176,7 +214,7 @@ struct message *add_chat(struct contact *pc, const char *message, int flags){
 	
 	m->length = strlen(message);
 	m->next = NULL;
-	m->nsent = 0;
+	m->nsent = -1;
 
 	strcpy(m->data, message);
 
@@ -227,6 +265,8 @@ struct message *message_load(char *buff){
 void msg_dump(){
 	struct contact *pc;
 	struct message *pm;
+	
+	return;
 
 	printf("msg dump **********\n");
 	for (pc = contact_list; pc; pc = pc->next){
@@ -367,7 +407,8 @@ void msg_init(){
 	chat_ui_init();
 	contact_add("VU2XZ", 7074600);
 	contact_add("VU2ESE", 7075000);	
-	//send_update();
+
+		
 	update_contacts();
 }
 
@@ -450,7 +491,7 @@ struct contact *contact_by_callsign(const char *callsign){
 //matches a contact within +- 100 hz of the last frequency
 struct contact *contact_by_frequency(int frequency){
 	for (struct contact *pc = contact_list; pc; pc = pc->next)
-		if (abs(pc->frequency - frequency) < 100)
+		if (abs(pc->frequency - frequency) < 20)
 			return pc;
 	return NULL;
 }
@@ -508,8 +549,11 @@ void msg_select(char *callsign){
 }
 
 void msg_process(int freq, const char *text){
-	char call[10];
+	char call[10], msg_local[20];
 	struct contact *pc;
+	char *mycall = field_str("MYCALL");
+
+	strcpy(msg_local, text);
 
 	printf("msg_process: %d [%s]\n", freq, text);
 	if (!strncmp(text, "CQ ", 3)){
@@ -519,6 +563,20 @@ void msg_process(int freq, const char *text){
 	else if (*text == '+'){
 		update_presence(freq, text + 1);	
 		msg_dump();
+	}
+	else if (strstr(text, mycall)){
+		strncpy(msg_local, text, sizeof(msg_local) - 1);
+		msg_local[sizeof(msg_local) - 1] = 0;	
+	
+		char *p = strtok(msg_local, " ");
+		if(!p)
+			return;
+		if (strcmp(p, mycall))
+			return;
+		char *contact = strtok(NULL, " ");
+		if (!contact)
+			return;
+		char *header = strtok(NULL, " ");	
 	}
 	else if (pc = contact_by_block(freq, text)){
 		add_chat(pc, text, MSG_INCOMING);
@@ -544,7 +602,7 @@ int msg_post(const char *contact, const char *message){
 		return -1;
 
 	struct message *pm = add_chat(pc, message, 0);
-	pm->nsent = 0;
+	pm->nsent = -1;
 	refresh_chat++;
 	return 0;
 }
@@ -567,6 +625,19 @@ void msg_poll(){
 	last_tick = now;
 
 	printf("msg time %d\n", (int)now); 
+
+	char msg_in[200], msg_out[200];
+
+/*
+	strcpy(msg_in, "shall we meet at 1500?");
+	encapsulate_message("VU2XZ", msg_in, msg_out);
+	printf("encap[%s:%d] %s\n", msg_in, strlen(msg_in), msg_out);
+
+	strcpy(msg_in, "hi sasi");
+	encapsulate_message("VU2XZ", msg_in, msg_out);
+	printf("encap[%s:%d] %s\n", msg_in, strlen(msg_in), msg_out);
+*/
+
 	//from here, we do stuff on every 15th second
 	msg_dump();
 	/* if (!strcmp(field_str("CONTACT"), "LIST"))
@@ -596,19 +667,39 @@ void msg_poll(){
 	//check if any online contact has an outgoing message
 	struct message *pm;
 	for (pc = contact_list; pc; pc = pc->next){
-		if (now - pc->last_update < 600){
+		//if (now - pc->last_update < 600)
+		if (1){
 			for (pm = pc->m_list; pm; pm = pm->next){
-				if((!(pm->flags & MSG_INCOMING)) && pm->nsent < pm->length){
-					char block[BLOCK_SIZE+1];			
+				if(!(pm->flags & MSG_INCOMING)){ 
+					char block[20];			
 
-					int nsize = pm->length - pm->nsent;
-					if (nsize > BLOCK_SIZE)
-						nsize = BLOCK_SIZE;	
-					strncpy(block, pm->data + pm->nsent, nsize);
-					block[nsize] = 0;
-					pm->nsent += nsize; 	
-					send_block(field_int("TX_PITCH"), block);
+					if(pm->nsent < pm->length){
+						//send out the header
+						if (pm->nsent == -1){
+							char header[20];
+							make_header(pc->callsign, pm->data, block);
+							pm->nsent = 0;	
+						}
+						else {
+							int nsize = pm->length - pm->nsent;
+							if (nsize > BLOCK_SIZE)
+								nsize = BLOCK_SIZE;	
+							strncpy(block, pm->data + pm->nsent, nsize);
+							block[nsize] = 0;
+							pm->nsent += nsize; 	
+						}
+						pm->time_updated = now;
+						printf("Sb %s\n", block);
+						send_block(field_int("TX_PITCH"), block);
+					} //end of transmit message attempt
+					//we have sent everything but got no acknowledgment and
+					//it has been five minutes since
+					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGED) == 0
+						&& pm->time_updated + 600 < now){			
+							pm->nsent = -1;	
+					}
 				}
+
 			} // next message of the contact 
 		}
 	} // next contact

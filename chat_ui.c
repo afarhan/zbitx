@@ -131,6 +131,7 @@ static void show_add_contact_dialog(GtkWindow *parent) {
             gtk_widget_destroy(error_dialog);
         } else {
             g_print("New contact callsign: %s\n", text);
+						add_contact(text);
             /* Optionally, add the contact to the contacts list:
              * add_item_to_contact_list(contacts_list, text);
              */
