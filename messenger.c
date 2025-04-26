@@ -83,6 +83,7 @@ struct contact {
 	time_t last_update;
 	uint32_t frequency; 
 	uint32_t flags;
+	char msg_buff[MAX_MSG_LENGTH+1];
 	struct message *m_list;
 	struct contact *next; 
 }; 
@@ -239,6 +240,7 @@ struct message *message_load(char *buff){
 	strcpy(local, buff);
 	struct message *m = (struct message *)malloc(sizeof(struct message) + strlen(local));
 
+
 	// time_created
 	uint32_t x = strtoul(strtok(buff, "|"), NULL, 10);
 	if (x == 0)
@@ -349,6 +351,8 @@ struct contact *contact_load(const char *string){
 	if (!pc)
 		return NULL;
 
+	memset(pc, 0, sizeof(struct contact));
+
 	char buff[100];
 	strcpy(buff, string);
 
@@ -392,6 +396,8 @@ struct contact *contact_add(const char *callsign, int frequency){
 	struct contact *pc = (struct contact *)malloc(sizeof(struct contact));
 	if (!pc)
 		return NULL;
+	memset(pc, 0, sizeof(struct contact));
+
 	strcpy(pc->callsign, callsign);
 	pc->frequency = frequency;
 	pc->flags = CONTACT_FLAG_SAVED;
@@ -533,7 +539,8 @@ void update_presence(int freq, const char *notification){
 	char call[10];
 	int i;
 
-	for (i = 0; i < MAX_CALLSIGN-1 && isalnum(*notification); i++)
+	for (i = 0; i < MAX_CALLSIGN-1 
+		&& (isalnum(*notification) || *notification == '/'); i++)
 		call[i] = *notification++;
 	call[i] = 0;
 		
@@ -572,38 +579,43 @@ void msg_process(int freq, const char *text){
 
 	strcpy(msg_local, text);
 
+	//this may happen at the start, before
+	//the user_settings.ini is loaded
+	if (!mycall)
+		return;
+
 	printf("msg_process: %d [%s]\n", freq, text);
 	if (!strncmp(text, "CQ ", 3)){
 		update_presence(freq, text + 3);	
-		msg_dump();
 	}
 	else if (*text == '+'){
 		update_presence(freq, text + 1);	
-		msg_dump();
 	}
-	else if (mycall && strstr(text, mycall)){
+	else{
+
+		//test if this is the header of a new message
 		strncpy(msg_local, text, sizeof(msg_local) - 1);
 		msg_local[sizeof(msg_local) - 1] = 0;	
 	
-		char *p = strtok(msg_local, " ");
-		if(!p)
-			return;
-		if (strcmp(p, mycall))
-			return;
+		char *me = strtok(msg_local, " ");
 		char *contact = strtok(NULL, " ");
-		if (!contact)
-			return;
-		char *header = strtok(NULL, " ");
-	
-		//search for the contact, create new if not found
-	
-		//add a zero length message
-		
+		char *checksum = strtok(NULL, " ");
+
+		//does this look like a header?
+		if (me && contact && checksum && !strcmp(me, mycall) 
+			&& strlen(checksum) == 4 && strlen(contact) <= 8
+			&& checksum[3] == '0'){
+			
+			pc = contact_by_callsign(call); 
+			if(!pc)
+				pc = contact_add(call, freq);
+
+			add_chat(pc, text, MSG_INCOMING);
+		}
+		else if (pc = contact_by_block(freq, text))
+			add_chat(pc, text, MSG_INCOMING);
 	}
-	else if (pc = contact_by_block(freq, text)){
-		add_chat(pc, text, MSG_INCOMING);
-		msg_dump();
-	}
+	msg_dump();
 }
 
 
@@ -672,6 +684,7 @@ void msg_poll(){
 	if (next_update < now){
 		printf("sending update %u vs %u\n", next_update, now);
 		send_update();
+		return;
 	}
 
 	//try sending the messages only after at least one 

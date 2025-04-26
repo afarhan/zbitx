@@ -490,12 +490,12 @@ static int sbitx_ft8_decode(float *signal, int num_samples, bool is_ft8)
           sprintf(buff, "%s %3d %+03d %-4.0f ~  %s\n", time_str, 
 						cand->score, cand->snr, freq_hz, message.text);
 
+					message_add("FT8", freq_hz, 0, message.text);
+
 					if (ft8_protocol == MODE_MSG)
 						msg_process(field_int("FREQ") + freq_hz, message.text);
 
-				//message_add(char *mode, unsigned int frequency, int outgoing, char *message);
-					message_add("FT8", freq_hz, 0, message.text);
-					if (strstr(buff, mycallsign_upper)){
+					if (strstr(buff, mycallsign_upper) && ft8_protocol == MODE_FT8){
 						write_console(FONT_FT8_REPLY, buff);
 						ft8_process(buff, FT8_CONTINUE_QSO);
 					}
@@ -545,6 +545,7 @@ static void ft8_start_tx(int offset_seconds){
   sprintf(buff, "%02d%02d%02d  TX +00 %04d ~  %s\n", t->tm_hour, t->tm_min, t->tm_sec, ft8_pitch, ft8_tx_text);
 	write_console(FONT_FT8_TX, buff);
 	message_add("FT8", ft8_pitch, 1, ft8_tx_text);
+	printf("starting transmission of [%s]\n", ft8_tx_text);
 
 	ft8_tx_nsamples = sbitx_ft8_encode(ft8_tx_text, ft8_pitch, ft8_tx_buff, false); 
 	ft8_tx_buff_index = offset_seconds * 96000;
@@ -567,6 +568,7 @@ void ft8_tx(char *message, int freq){
 	ft8_pitch = freq;
   sprintf(buff, "%02d%02d%02d  TX +00 %04d ~  %s\n", t->tm_hour, t->tm_min, t->tm_sec, ft8_pitch, ft8_tx_text);
 	write_console(FONT_FT8_QUEUED, buff);
+	printf("ft8_tx txing [%s]\n", ft8_tx_text);
 
 	//also set the times of transmission
 	char str_tx1st[10], str_repeat[10];
@@ -594,12 +596,7 @@ void ft8_tx(char *message, int freq){
 	else
 		ft8_repeat = atoi(str_repeat);
 
-	// if it is a CQ message, then wait for the slot
-	if (!strncmp(ft8_tx_text, "CQ ", 3) || ft8_tx_text[0] == '+')
-		return;
-
-	//figure out how many samples can be transmitted in this current slot
-	int index = (slot_second % 15) * 96000;
+	printf("ft8_repeat %d\n", ft8_repeat);
 }
 
 void *ft8_thread_function(void *ptr){
@@ -656,38 +653,52 @@ void ft8_rx(int32_t *samples, int count){
 void ft8_poll(int seconds, int tx_is_on){
 	static int last_second = 0;
 
-	if (seconds % 15 == 0 && last_second != seconds && ft8_protocol == MODE_MSG){
-		msg_poll();
-	}
-
 	//if we are already transmitting, we continue 
 	//until we run out of ft8 sampels
 	if (tx_is_on){
 		//tx_off should not abort repeats from modem_poll, when called from here
 		int ft8_repeat_save = ft8_repeat;
 		if (ft8_tx_nsamples == 0){
+		printf("ft8 %d TX OFF<<<<<<<<<<<<<<<<<\n", __LINE__);
 			tx_off();
 			ft8_repeat = ft8_repeat_save;
+			printf("tx turned off at %d seconds\n", seconds);
 		}
-		return;
+		if (ft8_protocol == MODE_FT8)
+			return;
+	}
+
+	if (seconds % 15 == 0 && last_second != seconds && ft8_protocol == MODE_MSG){
+		msg_poll();
 	}
 
 	if (!ft8_repeat || seconds == last_second)
 		return;
 
+	printf("ft8_poll seconds %d\n", seconds);
+	printf("  ft8 %d\n", __LINE__);
 	//we poll for this only once every second
 	//we are here only if we are rx-ing and we have a pending transmission 
 	last_second = seconds = seconds % 60;
-
-	if (
-		(ft8_tx1st == 1 && ((seconds >= 0  && seconds < 15) ||
-			(seconds >=30 && seconds < 45))) ||
-		(ft8_tx1st == 0 && ((seconds >= 15 && seconds < 30)|| 
-			(seconds >= 45 && seconds < 59)))){
+	if (ft8_protocol == MODE_FT8){
+		if (
+			(ft8_tx1st == 1 && ((seconds >= 0  && seconds < 15) ||
+				(seconds >=30 && seconds < 45))) ||
+			(ft8_tx1st == 0 && ((seconds >= 15 && seconds < 30)|| 
+				(seconds >= 45 && seconds < 59)))){
+		printf("ft8 %d ON >>>>>>>>>>>>>>>>>\n", __LINE__);
+			tx_on(TX_SOFT);
+			ft8_start_tx(seconds % 15);
+			ft8_repeat--;
+		}
+	}
+	else if (ft8_protocol == MODE_MSG && ft8_repeat){
+		printf("ft8 %d ON >>>>>>>>>>>>>>>>>\n", __LINE__);
 		tx_on(TX_SOFT);
 		ft8_start_tx(seconds % 15);
 		ft8_repeat--;
 	} 
+	printf("  ft8 %d\n", __LINE__);
 }
 
 float ft8_next_sample(){
@@ -848,8 +859,10 @@ void ft8_process(char *message, int operation){
 	char buff[100], reply_message[100], *p;
 	int auto_respond = 0;
 
-	if (ft8_protocol == MODE_MSG)
+	if (ft8_protocol == MODE_MSG){
 		msg_select(message); 
+		return;
+	}
 
 	if (ft8_message_tokenize(message) == -1)
 		return;
