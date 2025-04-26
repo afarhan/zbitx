@@ -13,7 +13,7 @@
 #include "ntputil.h"
 #include "md5.h"
 
-#define BLOCK_SIZE 13
+#define PACKET_SIZE 13
 #define MAX_MESSAGE 150
 /*
 	1. Blocks: 
@@ -70,9 +70,10 @@ struct message {
 	char data[1];
 };
 
-int next_update = 0;
-int refresh_chat = 0;
-int refresh_contacts = 0;
+static int next_update = 0;
+static int refresh_chat = 0;
+static int refresh_contacts = 0;
+static int next_save  = 0;
 
 #define MAX_CALLSIGN 20 
 #define CONTACT_FLAG_SAVED 1
@@ -84,6 +85,7 @@ struct contact {
 	uint32_t frequency; 
 	uint32_t flags;
 	char msg_buff[MAX_MSG_LENGTH+1];
+	time_t msg_timeout;
 	struct message *m_list;
 	struct contact *next; 
 }; 
@@ -133,7 +135,8 @@ int checksum(struct message *pm){
 
 static const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./? ";
 
-void make_header(char *recepient, char *message, char *output){
+void make_header(const char *dest, const char *src, 
+	const char *message, char *output){
 	char msg_local[MAX_MESSAGE];
 	int i = 0;
   MD5Context ctx;
@@ -151,9 +154,8 @@ void make_header(char *recepient, char *message, char *output){
 	}
 	msg_local[i] = 0;  
 
-	const char *mycall = field_str("MYCALLSIGN");
-  md5Update(&ctx, (uint8_t *)mycall, strlen(mycall));
-  md5Update(&ctx, (uint8_t *)recepient, strlen(recepient));
+  md5Update(&ctx, (uint8_t *)src, strlen(src));
+  md5Update(&ctx, (uint8_t *)dest, strlen(dest));
   md5Update(&ctx, (uint8_t *)message, strlen(message));
   md5Finalize(&ctx);
 
@@ -162,11 +164,11 @@ void make_header(char *recepient, char *message, char *output){
 	check[1] = 'A' + (ctx.digest[1] & 0xf);
 	check[2] = 0; 
 
-	int block_count = (strlen(message) + BLOCK_SIZE - 1)/BLOCK_SIZE;
-	sprintf(output, "%s %s %s%d0", recepient, mycall, check, block_count); 	
+	int packet_count = (strlen(message) + PACKET_SIZE- 1)/PACKET_SIZE;
+	sprintf(output, "%s %s %s%d0", dest, src, check, packet_count); 	
 }
 
-void send_block(int freq, char *text){
+void send_packet(int freq, char *text){
 	//printf("Sending %s\n", text);
 	printf("Sending(%u) on %dhz, [%s]\n", time_sbitx(), freq, text);
 	fflush(stdout);
@@ -195,7 +197,7 @@ void send_update(){
 	next_update = time_sbitx() + 120 + ((rand() % 2) * 15);
 	printf("Next in %d seconds\n", next_update - time_sbitx());
 	fflush(stdout);
-	send_block(field_int("TX_PITCH"), notification);
+	send_packet(field_int("TX_PITCH"), notification);
 }
 
 struct message *add_chat(struct contact *pc, const char *message, int flags){
@@ -409,12 +411,12 @@ struct contact *contact_add(const char *callsign, int frequency){
 	return pc;
 }
 
-int block_count(int length){
+int packet_count(int length){
 	int count = 0;
 	//the last block has 3 character long checksum
-	while(length > BLOCK_SIZE -3){
+	while(length > PACKET_SIZE -3){
 		//each of non-last blocks has a '+' in the end
-		length -= (BLOCK_SIZE - 1);
+		length -= (PACKET_SIZE - 1);
 		count++;
 	}
 	return count;
@@ -423,10 +425,12 @@ int block_count(int length){
 void msg_init(){
 
 	selected_contact[0] = 0;
+	next_save  = time_sbitx() + 300;
 	chat_ui_init();
 
 	msg_load("/home/pi/sbitx/data/messenger.txt");
 	update_contacts();
+	char ack[10];
 }
 
 void msg_save(char *filename){
@@ -434,6 +438,7 @@ void msg_save(char *filename){
 	struct message *pm;
 	FILE *pf = fopen(filename, "w");
 
+	printf("Saving the messages\n");
 	if(!pf)
 		return;
 
@@ -445,6 +450,7 @@ void msg_save(char *filename){
 					pm->nsent, (int)(pm->length), pm->data);	
 	}
 	fclose(pf);
+	next_save = time_sbitx() + 300;
 }
 
 
@@ -519,11 +525,13 @@ struct contact *contact_by_frequency(int frequency){
 	return NULL;
 }
 
-struct contact *contact_by_block(int freq, const char *block){
+struct contact *contact_by_freq(int freq, const char *block){
 	//we will just scan the block for the callsigns
+	/*
 	for (struct contact *pc = contact_list; pc; pc = pc->next)
 		if (strstr(block, pc->callsign)) 
 			return pc;
+	*/
 
 	//after this we try matching the frequency
 	for (struct contact *pc = contact_list; pc; pc = pc->next)
@@ -573,11 +581,13 @@ void msg_select(char *callsign){
 }
 
 void msg_process(int freq, const char *text){
-	char call[10], msg_local[20];
+	char msg_local[20];
 	struct contact *pc;
-	const char *mycall = field_str("MYCALL");
+	const char *mycall = field_str("MYCALLSIGN");
 
 	strcpy(msg_local, text);
+
+	printf("msg_process %s\n", msg_local);
 
 	//this may happen at the start, before
 	//the user_settings.ini is loaded
@@ -606,14 +616,51 @@ void msg_process(int freq, const char *text){
 			&& strlen(checksum) == 4 && strlen(contact) <= 8
 			&& checksum[3] == '0'){
 			
-			pc = contact_by_callsign(call); 
+			pc = contact_by_callsign(contact); 
 			if(!pc)
-				pc = contact_add(call, freq);
+				pc = contact_add(contact, freq);
 
-			add_chat(pc, text, MSG_INCOMING);
+			//we hope we are not in the middle of
+			//receiving another message
+			if (pc->msg_timeout < time_sbitx()){
+				//add_chat(pc, text, MSG_INCOMING);
+				//third character is the packet count
+				pc->msg_timeout = time_sbitx() + (15 * checksum[2] - '0');
+				strcpy(pc->msg_buff, text);
+			}
 		}
-		else if (pc = contact_by_block(freq, text))
-			add_chat(pc, text, MSG_INCOMING);
+		else if (pc = contact_by_freq(freq, text)){
+			if (pc->msg_timeout <= time_sbitx()){
+				//add_chat(pc, text, MSG_INCOMING);
+				strcat(pc->msg_buff, text);
+				printf("appended to partial message [%s]\n", pc->msg_buff);
+			}
+			if (pc->msg_timeout >= time_sbitx() && pc->msg_buff[0]){
+				
+				printf("message finished as [%s], acknowledging\n", pc->msg_buff);
+				//checksum the message
+				//send the acknowledgment, the same header
+				char *p = pc->msg_buff;
+				while(*p > ' ')
+					p++;
+				p++;
+				while(*p > ' ')
+					p++;
+				p++;
+				while(*p > ' ')
+					p++;
+
+				char ack[100];
+				make_header(mycall, pc->callsign, pc->msg_buff, ack);	
+				if (!strncmp(ack, pc->msg_buff, strlen(ack))){
+					send_packet(field_int("TX_PITCH"), ack);
+					add_chat(pc, pc->msg_buff, MSG_INCOMING);
+					//release the buffer
+					pc->msg_buff[0] = 0;
+					pc->msg_timeout = 0;
+				}
+			}
+		}
 	}
 	msg_dump();
 }
@@ -658,20 +705,8 @@ void msg_poll(){
 
 	last_tick = now;
 
-	if (now % 300 == 0)
+	if (next_save < now)
 		msg_save("/home/pi/sbitx/data/messenger.txt");
-
-	char msg_in[200], msg_out[200];
-
-/*
-	strcpy(msg_in, "shall we meet at 1500?");
-	encapsulate_message("VU2XZ", msg_in, msg_out);
-	printf("encap[%s:%d] %s\n", msg_in, strlen(msg_in), msg_out);
-
-	strcpy(msg_in, "hi sasi");
-	encapsulate_message("VU2XZ", msg_in, msg_out);
-	printf("encap[%s:%d] %s\n", msg_in, strlen(msg_in), msg_out);
-*/
 
 	//from here, we do stuff on every 15th second
 	//msg_dump();
@@ -701,25 +736,24 @@ void msg_poll(){
 		if (1){
 			for (pm = pc->m_list; pm; pm = pm->next){
 				if(!(pm->flags & MSG_INCOMING)){ 
-					char block[20];			
+					char packet[20];			
 
 					if(pm->nsent < pm->length){
 						//send out the header
 						if (pm->nsent == -1){
-							char header[20];
-							make_header(pc->callsign, pm->data, block);
+							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
 							pm->nsent = 0;	
 						}
 						else {
 							int nsize = pm->length - pm->nsent;
-							if (nsize > BLOCK_SIZE)
-								nsize = BLOCK_SIZE;	
-							strncpy(block, pm->data + pm->nsent, nsize);
-							block[nsize] = 0;
+							if (nsize > PACKET_SIZE)
+								nsize = PACKET_SIZE;	
+							strncpy(packet, pm->data + pm->nsent, nsize);
+							packet[nsize] = 0;
 							pm->nsent += nsize; 	
 						}
 						pm->time_updated = now;
-						send_block(field_int("TX_PITCH"), block);
+						send_packet(field_int("TX_PITCH"), packet);
 						return; // don't try sending any more
 					} //end of transmit message attempt
 					//we have sent everything but got no acknowledgment and
