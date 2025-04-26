@@ -15,10 +15,12 @@ void msg_load(char *filename);
 void msg_poll();
 void msg_select(char *msg);
 int msg_post(const char *callsign, const char *message);
+void msg_add_contact(const char *callsign);
+void msg_remove_contact(const char *callsign);
+
 void chat_ui_init();
 void clear_contact_list();
 void add_item_to_contact_list(const char *c);
 void chat_clear();
+void chat_title(const char *title);
 void chat_append(const char *text);
-void msg_add_contact(const char *callsign);
-void msg_remove_contact(const char *callsign);

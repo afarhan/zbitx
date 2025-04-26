@@ -56,8 +56,6 @@
 */
 
 #define MSG_INCOMING  		0x00000001
-#define MSG_COMPLETED 		0x00000002
-#define MSG_DELETE 				0x00000004
 #define MSG_ACKNOWLEDGED  0x00000008
 
 #define MAX_MSG_LENGTH (52)
@@ -168,10 +166,10 @@ void make_header(char *recepient, char *message, char *output){
 }
 
 void send_block(int freq, char *text){
-	printf("Sending %s\n", text);
-	//printf("Sending(%u) at %d, on %d [%s]\n", time_sbitx(), freq, strlen(text), text);
+	//printf("Sending %s\n", text);
+	printf("Sending(%u) on %dhz, [%s]\n", time_sbitx(), freq, text);
 	fflush(stdout);
-	//ft8_tx(text, freq);
+	ft8_tx(text, freq);
 }
 
 void send_update(){
@@ -254,10 +252,14 @@ struct message *message_load(char *buff){
 
 	x = strtoul(strtok(NULL, "|"), NULL, 10);
 	m->flags = x;
+
+	x = strtoul(strtok(NULL, "|"), NULL, 10);
+	m->nsent = x;
 	
 	char *p = strtok(NULL, "|\n");
 	m->length = strlen(p);
 	strcpy(m->data, p);
+	m->next = NULL;
 
 	return m;
 }
@@ -281,9 +283,14 @@ void msg_dump(){
 }
 
 void update_chat(){
+
+	chat_clear();					
+	chat_title("(Select Contact)");
+
 	const char *contact = field_str("CONTACT");
-	if (!contact)
+	if (!contact){
 		return;
+	}
 	if (!strcmp(contact, "LIST"))
 		return;
 			
@@ -291,17 +298,21 @@ void update_chat(){
 	if (!pc)
 		return;
 
-	printf("   clearing chat\n");
-	chat_clear();					
-	printf("   cleard chat\n");
+	chat_title(contact);
 	for (struct message *pm = pc->m_list; pm; pm = pm->next){
 		char message[1000];
-		sprintf(message, "%s:\n%.*s\n", 
-			pm->flags & MSG_INCOMING ? pc->callsign : field_str("MYCALLSIGN"),
-			(int)(pm->length), pm->data);	
+		if(pm->flags & MSG_INCOMING == 0){
+			sprintf(message, "%s: %d/%d\n%.*s\n", 
+				pc->callsign, pm->nsent, pm->length, 
+				(int)(pm->length), pm->data);	
+		}
+		else {
+			sprintf(message, "%s:\n%.*s\n", 
+				pm->flags & MSG_INCOMING ? pc->callsign : field_str("MYCALLSIGN"),
+				(int)(pm->length), pm->data);	
+		}
 		chat_append(message);
 	}
-	printf("   updated chat\n");
 	refresh_chat = 0;
 }
 
@@ -371,6 +382,8 @@ struct contact *contact_load(const char *string){
 	if (x & CONTACT_FLAG_DELETE)
 		return NULL;
 	pc->flags= x;
+	pc->next = NULL;
+	pc->m_list = NULL;
 
 	return pc;
 }
@@ -405,36 +418,40 @@ void msg_init(){
 
 	selected_contact[0] = 0;
 	chat_ui_init();
-	contact_add("VU2XZ", 7074600);
-	contact_add("VU2ESE", 7075000);	
 
-		
+	msg_load("/home/pi/sbitx/data/messenger.txt");
 	update_contacts();
 }
 
-void save_messenger(char *filename){
+void msg_save(char *filename){
 	struct contact *pc;
 	struct message *pm;
 	FILE *pf = fopen(filename, "w");
 
+	if(!pf)
+		return;
+
 	for (pc = contact_list; pc; pc = pc->next){
 		fprintf(pf, "%s|%s|%d|%d|%d\n", pc->callsign, pc->status, 
 			pc->last_update, pc->frequency, pc->flags);
-		for (pm = pc->m_list; pm; pm = pm->next)
-			fprintf(pf, " %d|%d|%d|%.*s\n", pm->time_created, pm->time_updated, pm->flags, 
-					(int)(pm->length), pm->data);	
+			for (pm = pc->m_list; pm; pm = pm->next)
+				fprintf(pf, " %d|%d|%d|%d|%.*s\n", pm->time_created, pm->time_updated, pm->flags, 
+					pm->nsent, (int)(pm->length), pm->data);	
 	}
 	fclose(pf);
 }
 
 
 // Recreate the messenger from a file/presistent storage
-void load_messenger(char *filename){
+void msg_load(char *filename){
 	char buff[100];
 	struct contact *pc = NULL;
 	struct message *pm = NULL;
 
 	FILE *pf = fopen(filename, "r");
+	if (!pf)
+		return;
+
 	while(fgets(buff, sizeof(buff)-1, pf)){
 		if (strlen(buff) < 10)
 			continue;
@@ -463,7 +480,7 @@ void load_messenger(char *filename){
 				else
 					contact_list = pc;
 				prev = pc;
-				pm = NULL; //star a new chain of messages
+				pm = NULL; //start a new chain of messages
 			}
 		}
 	}
@@ -551,7 +568,7 @@ void msg_select(char *callsign){
 void msg_process(int freq, const char *text){
 	char call[10], msg_local[20];
 	struct contact *pc;
-	char *mycall = field_str("MYCALL");
+	const char *mycall = field_str("MYCALL");
 
 	strcpy(msg_local, text);
 
@@ -564,7 +581,7 @@ void msg_process(int freq, const char *text){
 		update_presence(freq, text + 1);	
 		msg_dump();
 	}
-	else if (strstr(text, mycall)){
+	else if (mycall && strstr(text, mycall)){
 		strncpy(msg_local, text, sizeof(msg_local) - 1);
 		msg_local[sizeof(msg_local) - 1] = 0;	
 	
@@ -576,7 +593,12 @@ void msg_process(int freq, const char *text){
 		char *contact = strtok(NULL, " ");
 		if (!contact)
 			return;
-		char *header = strtok(NULL, " ");	
+		char *header = strtok(NULL, " ");
+	
+		//search for the contact, create new if not found
+	
+		//add a zero length message
+		
 	}
 	else if (pc = contact_by_block(freq, text)){
 		add_chat(pc, text, MSG_INCOMING);
@@ -607,7 +629,7 @@ int msg_post(const char *contact, const char *message){
 	return 0;
 }
 
-//this is called every 15 seconds
+//this is called every second
 void msg_poll(){
 	static int last_tick = 0;
 
@@ -615,7 +637,7 @@ void msg_poll(){
 	if (now == last_tick)
 		return;
 
-	printf("time_sbitx %u\n", now);	
+	//printf("msg_poll %u\n", now);	
 	if (refresh_chat)
 		update_chat();
 
@@ -624,7 +646,8 @@ void msg_poll(){
 
 	last_tick = now;
 
-	printf("msg time %d\n", (int)now); 
+	if (now % 300 == 0)
+		msg_save("/home/pi/sbitx/data/messenger.txt");
 
 	char msg_in[200], msg_out[200];
 
@@ -639,23 +662,16 @@ void msg_poll(){
 */
 
 	//from here, we do stuff on every 15th second
-	msg_dump();
-	/* if (!strcmp(field_str("CONTACT"), "LIST"))
-		update_contacts();
-	else
-		update_chat();*/
+	//msg_dump();
 
+	if (now % 15)
+		return;
+
+	printf("msg slot processing %d\n", now);
+	
 	if (next_update < now){
 		printf("sending update %u vs %u\n", next_update, now);
 		send_update();
-	}
-
-	struct contact *pc = contact_by_callsign("VU2XZ");
-	if (pc){
-		char text[100];
-
-		sprintf(text, "hey %d\n", last_tick);
-		//add_chat(pc, text, MSG_INCOMING);
 	}
 
 	//try sending the messages only after at least one 
@@ -666,6 +682,7 @@ void msg_poll(){
 
 	//check if any online contact has an outgoing message
 	struct message *pm;
+	struct contact *pc;
 	for (pc = contact_list; pc; pc = pc->next){
 		//if (now - pc->last_update < 600)
 		if (1){
@@ -689,8 +706,8 @@ void msg_poll(){
 							pm->nsent += nsize; 	
 						}
 						pm->time_updated = now;
-						printf("Sb %s\n", block);
 						send_block(field_int("TX_PITCH"), block);
+						return; // don't try sending any more
 					} //end of transmit message attempt
 					//we have sent everything but got no acknowledgment and
 					//it has been five minutes since
@@ -706,5 +723,45 @@ void msg_poll(){
 }
 
 
+void msg_add_contact(const char *callsign){
+	char newcall[12];
 
+	if (strlen(callsign) > 10){
+		printf("messenger.c:callsign %s is too long\n", callsign);
+		return;
+	}
+	char *q = newcall;
+	for (const char *p = callsign; *p; p++)
+		*q++ = toupper(*p);
+	*q = 0;
 
+	struct contact *pc = contact_add(newcall, 0);
+	refresh_contacts++;
+}
+
+void msg_remove_contact(const char *callsign){
+	struct contact *pc, *prev = NULL;	
+	for (pc = contact_list; pc; pc = pc->next){
+		if (!strcmp(callsign, pc->callsign)){
+			if (prev)
+				prev->next = pc->next;
+			else
+				contact_list = pc->next;
+			//free the message list
+			struct message *pm = pc->m_list; 
+			while(pm){
+				struct message *next = pm->next;
+				free(pm);
+				pm = next;	
+			}
+		
+			if (!strcmp(selected_contact, callsign))
+				selected_contact[0] = 0;	
+			free(pc);
+			refresh_contacts++;
+			refresh_chat++;
+			return;
+		}
+		prev = pc;
+	}
+}

@@ -31,6 +31,7 @@
 static GtkWidget *chat_window = NULL;
 static GtkWidget *contacts_list = NULL;
 static GtkWidget *text_view = NULL;
+static GtkWidget *header = NULL;
 
 /* Structure to hold widgets we need to access from callbacks */
 typedef struct {
@@ -131,7 +132,7 @@ static void show_add_contact_dialog(GtkWindow *parent) {
             gtk_widget_destroy(error_dialog);
         } else {
             g_print("New contact callsign: %s\n", text);
-						add_contact(text);
+						msg_add_contact(text);
             /* Optionally, add the contact to the contacts list:
              * add_item_to_contact_list(contacts_list, text);
              */
@@ -176,7 +177,11 @@ static void on_send_button_clicked(GtkButton *button, gpointer user_data) {
  * In this example, it simply prints the label of the activated item.
  */
 static void menuitem_activate_cb(GtkMenuItem *menuitem, gpointer user_data) {
-    g_print("Activated menu item: %s\n", gtk_menu_item_get_label(menuitem));
+	char const *p =  gtk_menu_item_get_label(menuitem);
+	if(!strcmp(p, "Delete"))
+		msg_remove_contact(field_str("CONTACT"));
+
+   g_print("Activated menu item: %s\n", gtk_menu_item_get_label(menuitem));
 }
 
 /* Callback for handling right-click events on the contacts list.
@@ -223,6 +228,10 @@ void on_contact_selected(GtkListBox *box, GtkListBoxRow *row, gpointer ud){
 	msg_select(callsign);
 }
 
+void chat_title(const char *title){
+   gtk_header_bar_set_title(GTK_HEADER_BAR(header), title);
+}
+
 void chat_ui_init(){
 
 	 chat_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -230,6 +239,7 @@ void chat_ui_init(){
    gtk_window_set_default_size(GTK_WINDOW(chat_window), 600, 400);
 
    GtkCssProvider *provider = gtk_css_provider_new();
+	/*
    gtk_css_provider_load_from_data(provider,
        "window { background-color: #2e2e2e; }"
        "headerbar { background-color: #1e1e1e; color: #c0c0c0; }"
@@ -238,6 +248,16 @@ void chat_ui_init(){
        "textview { background-color: #444444; color: #c0c0c0; }"
        "list-row { background-color: #444444; color: #c0c0c0; }"
        "label { background-color: #444444; color: #00c0c0; }",
+        -1, NULL);
+	*/
+   gtk_css_provider_load_from_data(provider,
+       "window { background-color: #ffffff; }"
+       "headerbar { background-color: #ffffff; color: #000000; }"
+       "button { background-color: #ffffff; color: #000000; }"
+       "entry { background-color: #ffffff; color: #000000; }"
+       "textview { background-color: #444444; color: #c0c0c0; }"
+       "list-row { background-color: #ffffff; color: #000000; }"
+       "label { background-color: #ffffff; color: #000000; }",
         -1, NULL);
    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(),
        GTK_STYLE_PROVIDER(provider),
@@ -249,7 +269,7 @@ void chat_ui_init(){
    gtk_container_add(GTK_CONTAINER(chat_window), vbox);
 
    /* --- HEADER BAR --- */
-   GtkWidget *header = gtk_header_bar_new();
+   header = gtk_header_bar_new();
    gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header), FALSE);
    gtk_header_bar_set_title(GTK_HEADER_BAR(header), "Chat App");
    gtk_box_pack_start(GTK_BOX(vbox), header, FALSE, FALSE, 0);
