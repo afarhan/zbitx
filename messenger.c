@@ -111,6 +111,20 @@ int checksum(struct message *pm){
 
 static const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./? ";
 
+void reduce_text(const char *message, char *output){
+	int i = 0;
+	for (i = 0; i < strlen(message); i++){
+		if (isalnum(message[i]) || message[i] == '+' || 
+		message[i] == '-' || message[i] == '.' ||
+		message[i] == '/' || message[i] == '?' ||
+		message[i] == ' ')
+			output[i] = toupper(message[i]);
+		else
+			output[i] = '?';
+	}
+	output[i] = 0;  
+}
+
 void make_header(const char *dest, const char *src, 
 	const char *message, char *output){
 	char msg_local[MAX_MESSAGE];
@@ -119,16 +133,7 @@ void make_header(const char *dest, const char *src,
 
   md5Init(&ctx);
 
-	for (i = 0; i < strlen(message); i++){
-		if (isalnum(message[i]) || message[i] == '+' || 
-		message[i] == '-' || message[i] == '.' ||
-		message[i] == '/' || message[i] == '?' ||
-		message[i] == ' ')
-			msg_local[i] = toupper(message[i]);
-		else
-			msg_local[i] = '?';
-	}
-	msg_local[i] = 0;  
+	reduce_text(message, msg_local);
 
   md5Update(&ctx, (uint8_t *)src, strlen(src));
   md5Update(&ctx, (uint8_t *)dest, strlen(dest));
@@ -189,7 +194,7 @@ void send_update(){
 	else
 		strcat(notification, presence);
 
-	next_update = time_sbitx() + 120 + ((rand() % 2) * 15);
+	next_update = time_sbitx() + 900  + ((rand() % 2) * 15);
 	printf("Next in %d seconds\n", next_update - time_sbitx());
 	fflush(stdout);
 	send_packet(field_int("TX_PITCH"), notification);
@@ -212,17 +217,7 @@ struct message *add_chat(struct contact *pc, const char *message, int flags){
 	m->next = NULL;
 	m->nsent = -1;
 
-	int i = 0;
-	for (i = 0; i < strlen(message) && i < MAX_MSG_LENGTH; i++){
-		if (isalnum(message[i]) || message[i] == '+' || 
-		message[i] == '-' || message[i] == '.' ||
-		message[i] == '/' || message[i] == '?' ||
-		message[i] == ' ')
-			m->data[i] = toupper(message[i]);
-		else
-			m->data[i] = '?';
-	}
-	m->data[i] = 0;  
+	reduce_text(message, m->data);
 
 	//append to the end of the list
 	struct message *prev = NULL;
@@ -630,19 +625,19 @@ void msg_process(int freq, const char *text){
 			//we hope we are not in the middle of
 			//receiving another message
 			if (pc->msg_timeout < time_sbitx()){
-				//add_chat(pc, text, MSG_INCOMING);
-				//third character is the packet count
 				pc->msg_timeout = time_sbitx() + (15 * checksum[2] - '0');
 				strcpy(pc->msg_buff, text);
 			}
 		}
 		else if (pc = contact_by_freq(freq, text)){
-			if (pc->msg_timeout <= time_sbitx()){
+			
+			add_chat(pc, text, MSG_INCOMING);
+			if (pc->msg_timeout >= time_sbitx()){
 				//add_chat(pc, text, MSG_INCOMING);
 				strcat(pc->msg_buff, text);
 				printf("appended to partial message [%s]\n", pc->msg_buff);
 			}
-			if (pc->msg_timeout >= time_sbitx() && pc->msg_buff[0]){
+			if (pc->msg_timeout <= time_sbitx() && pc->msg_buff[0]){
 				
 				printf("message finished as [%s], acknowledging\n", pc->msg_buff);
 				//checksum the message
@@ -658,7 +653,10 @@ void msg_process(int freq, const char *text){
 					p++;
 
 				char ack[100];
+				make_header(pc->callsign, mycall, p, ack);	
+				printf("first %s ack %s\n", pc->msg_buff, ack);
 				make_header(mycall, pc->callsign, p, ack);	
+				printf("second ack %s %s\n", pc->msg_buff, ack);
 				if (!strncmp(ack, pc->msg_buff, strlen(ack))){
 					send_packet(field_int("TX_PITCH"), ack);
 					add_chat(pc, pc->msg_buff, MSG_INCOMING);
@@ -720,17 +718,20 @@ void msg_poll(){
 	if (now % 15)
 		return;
 
-	//try sending the messages only after at least one 
-	//notification update has been sent
 
-	if (!next_update){
-		send_update();
-		return;
+	//check if we are in teh middle of receiving any message
+	int active = 0;
+	struct contact *pc;
+	for (pc = contact_list; pc; pc = pc->next){
+		if (pc->msg_timeout > now)
+			active++;
 	}
+
+	if (active)
+		return;
 
 	//check if any online contact has an outgoing message
 	struct message *pm;
-	struct contact *pc;
 	for (pc = contact_list; pc; pc = pc->next){
 		//if (now - pc->last_update < 600)
 		if (1){
