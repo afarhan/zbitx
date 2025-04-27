@@ -31,30 +31,6 @@
 
 #define NOTIFICATION_PERIOD 300 //5 minutes, 300 seconds
 
-/** 
-	struct message
-	
-	Each message has a maximum length of 256 bytes
-	the conversation is in a linked list of messages
-	they are all time-stamped since gmt midnight, 1st jan, 2000 in seconds
-
-	flags field:
-	bit 1: is out_going (if 1 and 0 if incoming)
-	bit 2: completed (set if delivered and acknowledge)
-	bit 3: begining time-slot of the message 
-		(of the remote tx for incoming, of ours for outoging)
-	bit 4: marked for deletion 
-	the actual message is stored as segement in the message_buffer, pointed to by *data field
-
-	The messages are allowed only a small subset of 40 ASCII characters:
-	0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./? and SPACE.
-	The data storage can be encoded even tighter to save space.
-
-	the sent message is split into multiple blocks
-	of total physical length of 13 characters each.
-
-*/
-
 #define MSG_INCOMING  		0x00000001
 #define MSG_ACKNOWLEDGED  0x00000008
 
@@ -168,6 +144,25 @@ void make_header(const char *dest, const char *src,
 	sprintf(output, "%s %s %s%d0", dest, src, check, packet_count); 	
 }
 
+void test(char *test, char *contact, char *mycall){
+	
+	//send the acknowledgment, the same header
+	char *p = test;
+	while(*p > ' ')
+		p++;
+	p++;
+	while(*p > ' ')
+		p++;
+	//skip the space and the next four characters of the header
+	p+= 5;
+
+	char ack[100];
+	make_header(mycall, contact, p, ack);	
+	printf("original: %s\n", ack);
+	
+	printf("header: %s|%s|%s|%s|\n", test, contact, mycall, ack);
+}
+
 void send_packet(int freq, char *text){
 	//printf("Sending %s\n", text);
 	printf("Sending(%u) on %dhz, [%s]\n", time_sbitx(), freq, text);
@@ -217,7 +212,17 @@ struct message *add_chat(struct contact *pc, const char *message, int flags){
 	m->next = NULL;
 	m->nsent = -1;
 
-	strcpy(m->data, message);
+	int i = 0;
+	for (i = 0; i < strlen(message) && i < MAX_MSG_LENGTH; i++){
+		if (isalnum(message[i]) || message[i] == '+' || 
+		message[i] == '-' || message[i] == '.' ||
+		message[i] == '/' || message[i] == '?' ||
+		message[i] == ' ')
+			m->data[i] = toupper(message[i]);
+		else
+			m->data[i] = '?';
+	}
+	m->data[i] = 0;  
 
 	//append to the end of the list
 	struct message *prev = NULL;
@@ -430,7 +435,10 @@ void msg_init(){
 
 	msg_load("/home/pi/sbitx/data/messenger.txt");
 	update_contacts();
-	char ack[10];
+	test("VU2XZ VU2ESE BB10HELLO SASI. HOW ARE YOU?", "VU2XZ", "VU2ESE");
+	test("VU2XZ VU2ESE BB10HELLO SASI. HOW ARE YOU?", "VU2ESE", "VU2XZ");
+	test("VU2ESE VU2XZ BB10HELLO WORLD", "VU2XZ", "VU2ESE");
+	test("VU2ESE VU2XZ BB10HELLO WORLD", "VU2ESE", "VU2XZ");
 }
 
 void msg_save(char *filename){
@@ -571,7 +579,6 @@ void update_presence(int freq, const char *notification){
 void msg_select(char *callsign){
 	strcpy(selected_contact, callsign);
 	field_set("CONTACT", callsign);
-	printf("chatting with [%s]\n", selected_contact);
 	
 	struct contact *pc = contact_by_callsign(selected_contact);
 	if (!pc)
@@ -651,7 +658,7 @@ void msg_process(int freq, const char *text){
 					p++;
 
 				char ack[100];
-				make_header(mycall, pc->callsign, pc->msg_buff, ack);	
+				make_header(mycall, pc->callsign, p, ack);	
 				if (!strncmp(ack, pc->msg_buff, strlen(ack))){
 					send_packet(field_int("TX_PITCH"), ack);
 					add_chat(pc, pc->msg_buff, MSG_INCOMING);
@@ -696,7 +703,6 @@ void msg_poll(){
 	if (now == last_tick)
 		return;
 
-	//printf("msg_poll %u\n", now);	
 	if (refresh_chat)
 		update_chat();
 
@@ -714,19 +720,13 @@ void msg_poll(){
 	if (now % 15)
 		return;
 
-	printf("msg slot processing %d\n", now);
-	
-	if (next_update < now){
-		printf("sending update %u vs %u\n", next_update, now);
-		send_update();
-		return;
-	}
-
 	//try sending the messages only after at least one 
 	//notification update has been sent
 
-	if (!next_update)
+	if (!next_update){
+		send_update();
 		return;
+	}
 
 	//check if any online contact has an outgoing message
 	struct message *pm;
@@ -767,6 +767,13 @@ void msg_poll(){
 			} // next message of the contact 
 		}
 	} // next contact
+
+	//if nothing else was sent, send the notification
+	if (next_update < now){
+		printf("sending update %u vs %u\n", next_update, now);
+		send_update();
+		return;
+	}
 }
 
 
