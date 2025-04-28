@@ -732,10 +732,10 @@ void on_slot(){
 						pm->flags = MSG_INCOMING; //blank out the acknowledgement due
 					}
 				}
-				else { 
+				else if(now - pc->last_update < NOTIFICATION_REPEAT *2){
 					char packet[20];			
 		//for all outgoing packets
-					if(pm->nsent < pm->length && (pm->flags & MSG_ACKNOWLEDGE) == 0){
+					if(pm->nsent < pm->length){
 						//send out the header, starting the tx process only if we had recently seen the contact
 						if (pm->nsent == -1 && now - pc->last_update < (NOTIFICATION_REPEAT * 2)){
 							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
