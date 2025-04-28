@@ -7,6 +7,7 @@
 #include <complex.h>
 #include <fftw3.h>
 #include <ctype.h>
+#include <time.h>
 #include "sdr.h"
 #include "sdr_ui.h"
 #include "modem_ft8.h"
@@ -15,6 +16,8 @@
 
 #define PACKET_SIZE 13
 #define MAX_MESSAGE 150
+#define MSG_RETRY_SECONDS  480 
+#define NOTIFICATION_REPEAT 300 
 /*
 	1. Blocks: 
 	1.1 Every message is split into one or more blocks. 
@@ -32,7 +35,7 @@
 #define NOTIFICATION_PERIOD 300 //5 minutes, 300 seconds
 
 #define MSG_INCOMING  		0x00000001
-#define MSG_ACKNOWLEDGED  0x00000008
+#define MSG_ACKNOWLEDGED  0x00000002
 
 #define MAX_MSG_LENGTH (52)
 struct message {
@@ -199,7 +202,7 @@ void send_update(){
 	else
 		strcat(notification, presence);
 
-	next_update = time_sbitx() + 900  + ((rand() % 2) * 15);
+	next_update = time_sbitx() + NOTIFICATION_REPEAT + ((rand() % 2) * 15);
 	printf("Next in %d seconds\n", next_update - time_sbitx());
 	fflush(stdout);
 	send_packet(field_int("TX_PITCH"), notification);
@@ -292,6 +295,7 @@ void msg_dump(){
 }
 
 void update_chat(){
+	char message[1000];
 
 	chat_clear();					
 	chat_title("(Select Contact)");
@@ -309,16 +313,26 @@ void update_chat(){
 
 	chat_title(contact);
 	for (struct message *pm = pc->m_list; pm; pm = pm->next){
-		char message[1000];
-		if(pm->flags & MSG_INCOMING == 0){
-			sprintf(message, "%s: %d/%d\n%.*s\n", 
-				pc->callsign, pm->nsent, pm->length, 
-				(int)(pm->length), pm->data);	
+		time_t msg_time = pm->time_created;
+		struct tm *t = gmtime(&msg_time);
+		if(!(pm->flags & MSG_INCOMING)){
+			if (pm->nsent == -1){
+				sprintf(message, "%s (%d/%d/%d %02d:%02d) New \n%.*s\n", 
+					field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+					t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
+			}
+			else{
+				sprintf(message, "%s (%d/%d/%d %02d:%02d) %d/%d\n%.*s\n", 
+					field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+					t->tm_hour, t->tm_min, pm->nsent, pm->length, 
+					(int)(pm->length), pm->data);	
+			}
+
 		}
 		else {
-			sprintf(message, "%s:\n%.*s\n", 
-				pm->flags & MSG_INCOMING ? pc->callsign : field_str("MYCALLSIGN"),
-				(int)(pm->length), pm->data);	
+			sprintf(message, "%s (%d/%d/%d %02d:%02d\n%.*s\n", 
+				pc->callsign, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+				t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
 		}
 		chat_append(message);
 	}
@@ -600,6 +614,7 @@ int msg_post(const char *contact, const char *message){
 
 	struct message *pm = add_chat(pc, message, 0);
 	pm->nsent = -1;
+	update_chat();
 	refresh_chat++;
 	return 0;
 }
@@ -724,12 +739,9 @@ void every_slot(){
 					char packet[20];			
 
 					if(pm->nsent < pm->length){
-	printf("%d found [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 						//send out the header
 						if (pm->nsent == -1){
-	printf("%d makeing header of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
-
 							pm->nsent = 0;	
 						}
 						else {
@@ -741,16 +753,12 @@ void every_slot(){
 							pm->nsent += nsize; 	
 						}
 						pm->time_updated = now;
-	printf("%d sending packet of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 						send_packet(field_int("TX_PITCH"), packet);
 						return; // don't try sending any more
 					} //end of transmit message attempt
-					//we have sent everything but got no acknowledgment and
-					//it has been five minutes since
 					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGED) == 0
-						&& pm->time_updated + 600 < now){			
+						&& pm->time_updated + MSG_RETRY_SECONDS < now){			
 							pm->nsent = -1;	
-	printf("%d resetting of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 					}
 				}
 

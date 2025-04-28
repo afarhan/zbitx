@@ -71,12 +71,13 @@ void chat_clear() {
 
 /* Appends new text (followed by a newline) to the text view widget. */
 void chat_append(const char *new_text) {
-		printf("chat adding %s\n", new_text);
-    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
-    GtkTextIter end_iter;
-    gtk_text_buffer_get_end_iter(buffer, &end_iter);
-    gtk_text_buffer_insert(buffer, &end_iter, new_text, -1);
-    gtk_text_buffer_insert(buffer, &end_iter, "\n", -1);
+	printf("chat adding %s\n", new_text);
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+  GtkTextIter end_iter;
+  gtk_text_buffer_get_end_iter(buffer, &end_iter);
+  gtk_text_buffer_insert(buffer, &end_iter, new_text, -1);
+  gtk_text_buffer_insert(buffer, &end_iter, "\n", -1);
+	gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(text_view), &end_iter, 0.0, FALSE, 0, 1.0);	
 }
 
 /*
@@ -167,9 +168,9 @@ static void on_send_button_clicked(GtkButton *button, gpointer user_data) {
     AppWidgets *widgets = (AppWidgets *)user_data;
     const gchar *entry_text = gtk_entry_get_text(GTK_ENTRY(widgets->entry));
     if (g_strcmp0(entry_text, "") != 0) {
-        //chat_append(entry_text);
-				msg_post(NULL, entry_text);
-        gtk_entry_set_text(GTK_ENTRY(widgets->entry), "");
+      //chat_append(entry_text);
+			msg_post(NULL, entry_text);
+      gtk_entry_set_text(GTK_ENTRY(widgets->entry), "");
     }
 }
 
