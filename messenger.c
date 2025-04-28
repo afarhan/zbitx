@@ -123,6 +123,11 @@ void reduce_text(const char *message, char *output){
 			output[i] = '?';
 	}
 	output[i] = 0;  
+	//pad the text to fill the last packet
+	while (i % PACKET_SIZE){
+		strcat(output, " ");	
+		i++;
+	}
 }
 
 void make_header(const char *dest, const char *src, 
@@ -430,10 +435,6 @@ void msg_init(){
 
 	msg_load("/home/pi/sbitx/data/messenger.txt");
 	update_contacts();
-	test("VU2XZ VU2ESE BB10HELLO SASI. HOW ARE YOU?", "VU2XZ", "VU2ESE");
-	test("VU2XZ VU2ESE BB10HELLO SASI. HOW ARE YOU?", "VU2ESE", "VU2XZ");
-	test("VU2ESE VU2XZ BB10HELLO WORLD", "VU2XZ", "VU2ESE");
-	test("VU2ESE VU2XZ BB10HELLO WORLD", "VU2ESE", "VU2XZ");
 }
 
 void msg_save(char *filename){
@@ -607,6 +608,7 @@ void msg_process(int freq, const char *text){
 	char msg_local[20];
 	struct contact *pc;
 	const char *mycall = field_str("MYCALLSIGN");
+	time_t now = time_sbitx();
 
 	strcpy(msg_local, text);
 
@@ -638,20 +640,25 @@ void msg_process(int freq, const char *text){
 		if (me && contact && checksum && !strcmp(me, mycall) 
 			&& strlen(checksum) == 4 && strlen(contact) <= 8
 			&& checksum[3] == '0'){
-			
+		
+			printf("starting a new message accumulation from %s\n", contact);	
 			pc = contact_by_callsign(contact); 
 			if(!pc)
 				pc = contact_add(contact, freq);
 
 			//we hope we are not in the middle of
 			//receiving another message
-			if (pc->msg_timeout < time_sbitx()){
-				pc->msg_timeout = time_sbitx() + (15 * checksum[2] - '0');
+			if (pc->msg_timeout < now){
+				int nslots = checksum[2] - '0';
+				printf("got %d slots\n", nslots);
+				pc->msg_timeout = time_sbitx() + (15 * nslots);
+				printf("msg_timeout %u vs now %u\n", pc->msg_timeout, now);
 				strcpy(pc->msg_buff, text);
 			}
 		}
 		else if (pc = contact_by_freq(freq, text)){
-			
+		
+			printf("msg_timeout %u vs now %u\n", pc->msg_timeout, now); 	
 			add_chat(pc, text, MSG_INCOMING);
 			if (pc->msg_timeout >= time_sbitx()){
 				//add_chat(pc, text, MSG_INCOMING);
@@ -669,9 +676,8 @@ void msg_process(int freq, const char *text){
 				p++;
 				while(*p > ' ')
 					p++;
-				p++;
-				while(*p > ' ')
-					p++;
+				//skip the space followed by the header of 4
+				p+= 5;
 
 				char ack[100];
 				make_header(pc->callsign, mycall, p, ack);	
@@ -683,8 +689,8 @@ void msg_process(int freq, const char *text){
 					add_chat(pc, pc->msg_buff, MSG_INCOMING);
 					//release the buffer
 					pc->msg_buff[0] = 0;
-					pc->msg_timeout = 0;
 				}
+			pc->msg_timeout = 0;
 			}
 		}
 	}
@@ -721,7 +727,7 @@ void every_slot(){
 	printf("%d found [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 						//send out the header
 						if (pm->nsent == -1){
-	printf("%d sending header of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
+	printf("%d makeing header of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
 
 							pm->nsent = 0;	
@@ -735,7 +741,7 @@ void every_slot(){
 							pm->nsent += nsize; 	
 						}
 						pm->time_updated = now;
-	printf("%d sending header of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
+	printf("%d sending packet of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
 						send_packet(field_int("TX_PITCH"), packet);
 						return; // don't try sending any more
 					} //end of transmit message attempt
