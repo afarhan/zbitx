@@ -582,6 +582,27 @@ void msg_select(char *callsign){
 	
 }
 
+int msg_post(const char *contact, const char *message){
+	if (!contact && selected_contact[0] == 0){
+		printf("No contact selected\n");	
+		return -1;
+	}
+
+	if (!contact)
+		contact= selected_contact;
+
+	struct contact *pc = contact_by_callsign(contact);	
+	if(!pc)
+		pc = contact_add(contact, 0); //we havent heard from them yet
+	if (!pc) //out of memory?
+		return -1;
+
+	struct message *pm = add_chat(pc, message, 0);
+	pm->nsent = -1;
+	refresh_chat++;
+	return 0;
+}
+
 void msg_process(int freq, const char *text){
 	char msg_local[20];
 	struct contact *pc;
@@ -670,27 +691,72 @@ void msg_process(int freq, const char *text){
 	msg_dump();
 }
 
+static struct message *m_in_tx = NULL;
 
+void every_slot(){
+	time_t now = time_sbitx();
 
-int msg_post(const char *contact, const char *message){
-	if (!contact && selected_contact[0] == 0){
-		printf("No contact selected\n");	
-		return -1;
+	//check if we are in teh middle of receiving any message
+	int active = 0;
+	struct contact *pc;
+	for (pc = contact_list; pc; pc = pc->next){
+		if (pc->msg_timeout > now)
+			active++;
 	}
 
-	if (!contact)
-		contact= selected_contact;
+	if (active)
+		return;
 
-	struct contact *pc = contact_by_callsign(contact);	
-	if(!pc)
-		pc = contact_add(contact, 0); //we havent heard from them yet
-	if (!pc) //out of memory?
-		return -1;
+	printf("%d checking any pending messags at %d\n", __LINE__, now % 60);
+	//check if any online contact has an outgoing message
+	struct message *pm;
+	for (pc = contact_list; pc; pc = pc->next){
+		//if (now - pc->last_update < 600)
+		if (1){
+			for (pm = pc->m_list; pm; pm = pm->next){
+				if(!(pm->flags & MSG_INCOMING)){ 
+					char packet[20];			
 
-	struct message *pm = add_chat(pc, message, 0);
-	pm->nsent = -1;
-	refresh_chat++;
-	return 0;
+					if(pm->nsent < pm->length){
+	printf("%d found [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
+						//send out the header
+						if (pm->nsent == -1){
+	printf("%d sending header of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
+							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
+
+							pm->nsent = 0;	
+						}
+						else {
+							int nsize = pm->length - pm->nsent;
+							if (nsize > PACKET_SIZE)
+								nsize = PACKET_SIZE;	
+							strncpy(packet, pm->data + pm->nsent, nsize);
+							packet[nsize] = 0;
+							pm->nsent += nsize; 	
+						}
+						pm->time_updated = now;
+	printf("%d sending header of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
+						send_packet(field_int("TX_PITCH"), packet);
+						return; // don't try sending any more
+					} //end of transmit message attempt
+					//we have sent everything but got no acknowledgment and
+					//it has been five minutes since
+					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGED) == 0
+						&& pm->time_updated + 600 < now){			
+							pm->nsent = -1;	
+	printf("%d resetting of [%s] %d/%d\n", __LINE__, pm->data, pm->nsent, strlen(pm->data));
+					}
+				}
+
+			} // next message of the contact 
+		}
+	} // next contact
+
+	//if nothing else was sent, send the notification
+	if (next_update < now){
+		printf("sending update %u vs %u\n", next_update, now);
+		send_update();
+	}
 }
 
 //this is called every second
@@ -718,65 +784,8 @@ void msg_poll(){
 	if (now % 15)
 		return;
 
-
-	//check if we are in teh middle of receiving any message
-	int active = 0;
-	struct contact *pc;
-	for (pc = contact_list; pc; pc = pc->next){
-		if (pc->msg_timeout > now)
-			active++;
-	}
-
-	if (active)
-		return;
-
-	//check if any online contact has an outgoing message
-	struct message *pm;
-	for (pc = contact_list; pc; pc = pc->next){
-		//if (now - pc->last_update < 600)
-		if (1){
-			for (pm = pc->m_list; pm; pm = pm->next){
-				if(!(pm->flags & MSG_INCOMING)){ 
-					char packet[20];			
-
-					if(pm->nsent < pm->length){
-						//send out the header
-						if (pm->nsent == -1){
-							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
-							pm->nsent = 0;	
-						}
-						else {
-							int nsize = pm->length - pm->nsent;
-							if (nsize > PACKET_SIZE)
-								nsize = PACKET_SIZE;	
-							strncpy(packet, pm->data + pm->nsent, nsize);
-							packet[nsize] = 0;
-							pm->nsent += nsize; 	
-						}
-						pm->time_updated = now;
-						send_packet(field_int("TX_PITCH"), packet);
-						return; // don't try sending any more
-					} //end of transmit message attempt
-					//we have sent everything but got no acknowledgment and
-					//it has been five minutes since
-					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGED) == 0
-						&& pm->time_updated + 600 < now){			
-							pm->nsent = -1;	
-					}
-				}
-
-			} // next message of the contact 
-		}
-	} // next contact
-
-	//if nothing else was sent, send the notification
-	if (next_update < now){
-		printf("sending update %u vs %u\n", next_update, now);
-		send_update();
-		return;
-	}
+	every_slot();
 }
-
 
 void msg_add_contact(const char *callsign){
 	char newcall[12];

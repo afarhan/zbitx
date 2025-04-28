@@ -221,6 +221,8 @@ void packtext77(const char* text, uint8_t* b77)
 {
     int length = strlen(text);
 
+		printf("pack retaining spaces");
+	/*
     // Skip leading and trailing spaces
     while (*text == ' ' && *text != 0)
     {
@@ -231,6 +233,7 @@ void packtext77(const char* text, uint8_t* b77)
     {
         --length;
     }
+*/
 
     // Clear the first 72 bits representing a long number
     for (int i = 0; i < 9; ++i)
