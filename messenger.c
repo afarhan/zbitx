@@ -624,14 +624,19 @@ void msg_process(int freq, const char *text){
 			&& checksum[3] == '0'){
 			printf("Received acknowledgment\n");
 			pc = contact_by_callsign(me);
-			for (struct message *m = pc->m_list; m; m = m->next){
-				char header[100];
-				make_header(contact, mycall, m->data, header);
-				if (!strcmp(header, text)){
-					printf("matched with %s\n", m->data);
-					pc->flags = pc->flags + MSG_ACKNOWLEDGE;
-					return;
-				}
+			if (pc){
+				for (struct message *m = pc->m_list; m; m = m->next){
+					char header[100];
+					make_header(pc->callsign, contact, m->data, header);
+					//the header matches an outgoing message
+					if (!strcmp(header, text) && !(m->flags & MSG_INCOMING)){
+						printf("matched with %s\n", m->data);
+						m->flags = m->flags + MSG_ACKNOWLEDGE;
+						return;
+					}
+					else
+						printf("header %s didn't match %s\n", header, text);
+				}//end of if(pc)
 			}
 		}
 
@@ -698,7 +703,7 @@ void msg_process(int freq, const char *text){
 
 static struct message *m_in_tx = NULL;
 
-void every_slot(){
+void on_slot(){
 	time_t now = time_sbitx();
 
 	//check if we are in teh middle of receiving any message
@@ -712,27 +717,27 @@ void every_slot(){
 	if (active)
 		return;
 
-	//check if any online contact has an outgoing message
 	struct message *pm;
 	for (pc = contact_list; pc; pc = pc->next){
 		//if (now - pc->last_update < 600)
 		if (1){
 			for (pm = pc->m_list; pm; pm = pm->next){
+		//if it is an incoming message and ACK is due
 				if(pm->flags & MSG_INCOMING){
 					if (pm->flags & MSG_ACKNOWLEDGE){
 						char packet[100];
 						make_header(field_str("MYCALLSIGN"), pc->callsign, pm->data, packet);
 						send_packet(field_int("TX_PITCH"), packet);
 						printf("sending acknowledgment of %s\n", packet);
-						pm->flags = pm->flags - MSG_ACKNOWLEDGE;
+						pm->flags = MSG_INCOMING; //blank out the acknowledgement due
 					}
 				}
 				else { 
 					char packet[20];			
-
-					if(pm->nsent < pm->length){
-						//send out the header
-						if (pm->nsent == -1){
+		//for all outgoing packets
+					if(pm->nsent < pm->length && (pm->flags & MSG_ACKNOWLEDGE) == 0){
+						//send out the header, starting the tx process only if we had recently seen the contact
+						if (pm->nsent == -1 && now - pc->last_update < (NOTIFICATION_REPEAT * 2)){
 							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
 							pm->nsent = 0;	
 						}
@@ -790,7 +795,7 @@ void msg_poll(){
 	if (now % 15)
 		return;
 
-	every_slot();
+	on_slot();
 }
 
 void msg_add_contact(const char *callsign){
