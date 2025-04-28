@@ -71,7 +71,6 @@ void chat_clear() {
 
 /* Appends new text (followed by a newline) to the text view widget. */
 void chat_append(const char *new_text) {
-	printf("chat adding %s\n", new_text);
   GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
   GtkTextIter end_iter;
   gtk_text_buffer_get_end_iter(buffer, &end_iter);
@@ -308,13 +307,6 @@ void chat_ui_init(){
    g_signal_connect(contacts_list, "button-press-event", G_CALLBACK(contacts_list_button_press_cb), NULL);
    g_signal_connect(contacts_list, "row-activated", G_CALLBACK(on_contact_selected), NULL);
 
-    /* Add some dummy contacts for demonstration 
-    for (int i = 0; i < 10; i++) {
-        gchar *name = g_strdup_printf("Contact %d", i + 1);
-        add_item_to_contact_list(contacts_list, name);
-        g_free(name);
-    }
-		*/
 
     /* Right Pane: Chat Area (Messages and Input) */
     GtkWidget *chat_vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);

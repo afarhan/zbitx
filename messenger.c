@@ -35,7 +35,7 @@
 #define NOTIFICATION_PERIOD 300 //5 minutes, 300 seconds
 
 #define MSG_INCOMING  		0x00000001
-#define MSG_ACKNOWLEDGED  0x00000002
+#define MSG_ACKNOWLEDGE  0x00000002
 
 #define MAX_MSG_LENGTH (52)
 struct message {
@@ -93,25 +93,6 @@ struct contact *contact_by_callsign(const char *callsign);
 
 #define MAX_CONTACTS 200
 
-/*
-int checksum(struct message *pm){
-	int check = 0;
-
-	//the checkum is on mycallsign + contact + timestamp + key + message
-
-	while(*text){
-		for (int i = 0; i < sizeof(charset); i++)
-			if (charset[i] == *text){
-				printf("check %x %d\n", check, i);
-				check = (check << 1) ^ i;
-			};
-		text++;
-	}
-	return check;
-}
-*/
-
-
 static const char charset[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./? ";
 
 void reduce_text(const char *message, char *output){
@@ -157,25 +138,6 @@ void make_header(const char *dest, const char *src,
 	sprintf(output, "%s %s %s%d0", dest, src, check, packet_count); 	
 }
 
-void test(char *test, char *contact, char *mycall){
-	
-	//send the acknowledgment, the same header
-	char *p = test;
-	while(*p > ' ')
-		p++;
-	p++;
-	while(*p > ' ')
-		p++;
-	//skip the space and the next four characters of the header
-	p+= 5;
-
-	char ack[100];
-	make_header(mycall, contact, p, ack);	
-	printf("original: %s\n", ack);
-	
-	printf("header: %s|%s|%s|%s|\n", test, contact, mycall, ack);
-}
-
 void send_packet(int freq, char *text){
 	//printf("Sending %s\n", text);
 	printf("Sending(%u) on %dhz, [%s]\n", time_sbitx(), freq, text);
@@ -208,40 +170,6 @@ void send_update(){
 	send_packet(field_int("TX_PITCH"), notification);
 }
 
-struct message *add_chat(struct contact *pc, const char *message, int flags){
-
-	struct message *m = (struct message *)malloc(sizeof(struct message) + strlen(message));
-
-	if (!m)
-		return NULL;
-
-	// time_created
-	m->time_created = time_sbitx();
-	m->time_updated = m->time_created;
-
-	m->flags = flags;
-	
-	m->length = strlen(message);
-	m->next = NULL;
-	m->nsent = -1;
-
-	reduce_text(message, m->data);
-
-	//append to the end of the list
-	struct message *prev = NULL;
-	struct message *now = pc->m_list;
-	while (now){
-		prev = now;
-		now = now->next;
-	}	
-	if (prev)
-		prev->next = m;
-	else
-		pc->m_list = m;	
-		
-	refresh_chat = 1;
-	return m;
-}
 
 struct message *message_load(char *buff){
 	while(*buff == ' ' || *buff == '\t')
@@ -330,7 +258,7 @@ void update_chat(){
 
 		}
 		else {
-			sprintf(message, "%s (%d/%d/%d %02d:%02d\n%.*s\n", 
+			sprintf(message, "%s (%d/%d/%d %02d:%02d)\n%.*s\n", 
 				pc->callsign, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
 				t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
 		}
@@ -413,6 +341,17 @@ struct contact *contact_load(const char *string){
 	return pc;
 }
 
+//moves the contact to the head of the list
+void contact_to_head(struct contact *pc){
+	struct contact *prev = NULL;
+	for (struct contact *p = contact_list; p; p = p->next)
+		if (p->next == pc){
+			p->next = pc->next; //remove from the list
+			pc->next = contact_list; //insert at the head
+			contact_list = pc;
+		}
+}
+
 struct contact *contact_add(const char *callsign, int frequency){
 	struct contact *pc = (struct contact *)malloc(sizeof(struct contact));
 	if (!pc)
@@ -428,6 +367,43 @@ struct contact *contact_add(const char *callsign, int frequency){
 	pc->m_list = NULL;
 	contact_list = pc;
 	return pc;
+}
+
+struct message *add_chat(struct contact *pc, const char *message, int flags){
+
+	struct message *m = (struct message *)malloc(sizeof(struct message) + strlen(message));
+
+	if (!m)
+		return NULL;
+
+	// time_created
+	m->time_created = time_sbitx();
+	m->time_updated = m->time_created;
+
+	m->flags = flags;
+	
+	m->length = strlen(message);
+	m->next = NULL;
+	m->nsent = -1;
+
+	reduce_text(message, m->data);
+
+	//append to the end of the list
+	struct message *prev = NULL;
+	struct message *now = pc->m_list;
+	while (now){
+		prev = now;
+		now = now->next;
+	}	
+	if (prev)
+		prev->next = m;
+	else
+		pc->m_list = m;	
+	
+	contact_to_head(pc);
+	
+	refresh_chat = 1;
+	return m;
 }
 
 int packet_count(int length){
@@ -517,16 +493,6 @@ void msg_load(char *filename){
 	fclose(pf);
 }
 
-//moves the contact to the head of the list
-void contact_to_head(struct contact *pc){
-	struct contact *prev = NULL;
-	for (struct contact *p = contact_list; p; p = p->next)
-		if (p->next == pc){
-			p->next = pc->next; //remove from the list
-			pc->next = contact_list; //insert at the head
-			contact_list = pc;
-		}
-}
 
 struct contact *contact_by_callsign(const char *callsign){
 	for (struct contact *pc = contact_list; pc; pc = pc->next)
@@ -651,6 +617,24 @@ void msg_process(int freq, const char *text){
 		char *contact = strtok(NULL, " ");
 		char *checksum = strtok(NULL, " ");
 
+		//does this look like an acknowledgment?
+		//the firt callsign is of the contact and second if of the sender(us)
+		if (me && contact && checksum && !strcmp(contact, mycall) 
+			&& strlen(checksum) == 4 && strlen(contact) <= 8
+			&& checksum[3] == '0'){
+			printf("Received acknowledgment\n");
+			pc = contact_by_callsign(me);
+			for (struct message *m = pc->m_list; m; m = m->next){
+				char header[100];
+				make_header(contact, mycall, m->data, header);
+				if (!strcmp(header, text)){
+					printf("matched with %s\n", m->data);
+					pc->flags = pc->flags + MSG_ACKNOWLEDGE;
+					return;
+				}
+			}
+		}
+
 		//does this look like a header?
 		if (me && contact && checksum && !strcmp(me, mycall) 
 			&& strlen(checksum) == 4 && strlen(contact) <= 8
@@ -666,7 +650,7 @@ void msg_process(int freq, const char *text){
 			if (pc->msg_timeout < now){
 				int nslots = checksum[2] - '0';
 				printf("got %d slots\n", nslots);
-				pc->msg_timeout = time_sbitx() + (15 * nslots);
+				pc->msg_timeout = now + (15 * nslots);
 				printf("msg_timeout %u vs now %u\n", pc->msg_timeout, now);
 				strcpy(pc->msg_buff, text);
 			}
@@ -674,13 +658,11 @@ void msg_process(int freq, const char *text){
 		else if (pc = contact_by_freq(freq, text)){
 		
 			printf("msg_timeout %u vs now %u\n", pc->msg_timeout, now); 	
-			add_chat(pc, text, MSG_INCOMING);
-			if (pc->msg_timeout >= time_sbitx()){
-				//add_chat(pc, text, MSG_INCOMING);
+			if (pc->msg_timeout >= now){
 				strcat(pc->msg_buff, text);
 				printf("appended to partial message [%s]\n", pc->msg_buff);
 			}
-			if (pc->msg_timeout <= time_sbitx() && pc->msg_buff[0]){
+			if (pc->msg_timeout <= now && pc->msg_buff[0]){
 				
 				printf("message finished as [%s], acknowledging\n", pc->msg_buff);
 				//checksum the message
@@ -695,20 +677,22 @@ void msg_process(int freq, const char *text){
 				p+= 5;
 
 				char ack[100];
-				make_header(pc->callsign, mycall, p, ack);	
-				printf("first %s ack %s\n", pc->msg_buff, ack);
 				make_header(mycall, pc->callsign, p, ack);	
-				printf("second ack %s %s\n", pc->msg_buff, ack);
 				if (!strncmp(ack, pc->msg_buff, strlen(ack))){
-					send_packet(field_int("TX_PITCH"), ack);
-					add_chat(pc, pc->msg_buff, MSG_INCOMING);
-					//release the buffer
+					printf("sending acknowledgement of [%s]\n", p);
+					struct message *m = add_chat(pc, p, MSG_INCOMING);
+					m->flags = m->flags + MSG_ACKNOWLEDGE;
 					pc->msg_buff[0] = 0;
+					pc->msg_timeout = 0;
+					
+					//release the buffer
 				}
-			pc->msg_timeout = 0;
+				//even if the message didnt add up, we reset the msg buff
+				//even if the message didnt add up, we reset the msg buff
 			}
 		}
 	}
+	refresh_chat++;
 	msg_dump();
 }
 
@@ -721,21 +705,29 @@ void every_slot(){
 	int active = 0;
 	struct contact *pc;
 	for (pc = contact_list; pc; pc = pc->next){
-		if (pc->msg_timeout > now)
+		if (pc->msg_timeout >= now)
 			active++;
 	}
 
 	if (active)
 		return;
 
-	printf("%d checking any pending messags at %d\n", __LINE__, now % 60);
 	//check if any online contact has an outgoing message
 	struct message *pm;
 	for (pc = contact_list; pc; pc = pc->next){
 		//if (now - pc->last_update < 600)
 		if (1){
 			for (pm = pc->m_list; pm; pm = pm->next){
-				if(!(pm->flags & MSG_INCOMING)){ 
+				if(pm->flags & MSG_INCOMING){
+					if (pm->flags & MSG_ACKNOWLEDGE){
+						char packet[100];
+						make_header(field_str("MYCALLSIGN"), pc->callsign, pm->data, packet);
+						send_packet(field_int("TX_PITCH"), packet);
+						printf("sending acknowledgment of %s\n", packet);
+						pm->flags = pm->flags - MSG_ACKNOWLEDGE;
+					}
+				}
+				else { 
 					char packet[20];			
 
 					if(pm->nsent < pm->length){
@@ -756,7 +748,7 @@ void every_slot(){
 						send_packet(field_int("TX_PITCH"), packet);
 						return; // don't try sending any more
 					} //end of transmit message attempt
-					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGED) == 0
+					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGE) == 0
 						&& pm->time_updated + MSG_RETRY_SECONDS < now){			
 							pm->nsent = -1;	
 					}
