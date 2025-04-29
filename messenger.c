@@ -171,7 +171,7 @@ struct message *message_load(char *buff){
 	strcpy(local, buff);
 	struct message *m = (struct message *)malloc(sizeof(struct message) + strlen(local));
 
-
+	m->nsent = -1;
 	// time_created
 	uint32_t x = strtoul(strtok(buff, "|"), NULL, 10);
 	if (x == 0)
