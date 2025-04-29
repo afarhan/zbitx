@@ -2362,9 +2362,6 @@ static void layout_ui(){
 		break;
 		case MODE_MSG:
 			field_move("ESC", 5, y1, 40, 45);
-			field_move("PRESENCE", 50, y1, 95, 45);
-			field_move("CONTACT", 150, y1, 95, 45);
-			field_move("FT8_TX1ST", 500, y2-47, 50, 45);
 			field_move("TX_PITCH", 600, y2-47, 73, 45);
 			field_move("CONSOLE", 5, y1+50, 350, y2-y1-55);
 			//move out the spectrum et al

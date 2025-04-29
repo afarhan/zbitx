@@ -568,7 +568,6 @@ void ft8_tx(char *message, int freq){
 	ft8_pitch = freq;
   sprintf(buff, "%02d%02d%02d  TX +00 %04d ~  %s\n", t->tm_hour, t->tm_min, t->tm_sec, ft8_pitch, ft8_tx_text);
 	write_console(FONT_FT8_QUEUED, buff);
-	printf("ft8_tx txing [%s]\n", ft8_tx_text);
 
 	//also set the times of transmission
 	char str_tx1st[10], str_repeat[10];
@@ -596,7 +595,6 @@ void ft8_tx(char *message, int freq){
 	else
 		ft8_repeat = atoi(str_repeat);
 
-	printf("ft8_repeat %d\n", ft8_repeat);
 }
 
 void *ft8_thread_function(void *ptr){
@@ -626,7 +624,7 @@ void ft8_rx(int32_t *samples, int count){
 	//if there is an overflow, then reset to the begining
 	if (ft8_rx_buff_index + (count/decimation_ratio) >= FT8_MAX_BUFF){
 		ft8_rx_buff_index = 0;		
-		printf("Buffer Overflow\n");
+		printf("ft8 Buffer Overflow\n");
 	}
 
 	//down convert to 12000 Hz sampling rate
@@ -659,10 +657,8 @@ void ft8_poll(int seconds, int tx_is_on){
 		//tx_off should not abort repeats from modem_poll, when called from here
 		int ft8_repeat_save = ft8_repeat;
 		if (ft8_tx_nsamples == 0){
-		printf("ft8 %d TX OFF<<<<<<<<<<<<<<<<<\n", __LINE__);
 			tx_off();
 			ft8_repeat = ft8_repeat_save;
-			printf("tx turned off at %d seconds\n", seconds);
 		}
 		if (ft8_protocol == MODE_FT8)
 			return;
@@ -675,8 +671,6 @@ void ft8_poll(int seconds, int tx_is_on){
 	if (!ft8_repeat || seconds == last_second)
 		return;
 
-	printf("ft8_poll seconds %d\n", seconds);
-	printf("  ft8 %d\n", __LINE__);
 	//we poll for this only once every second
 	//we are here only if we are rx-ing and we have a pending transmission 
 	last_second = seconds = seconds % 60;
@@ -686,19 +680,16 @@ void ft8_poll(int seconds, int tx_is_on){
 				(seconds >=30 && seconds < 45))) ||
 			(ft8_tx1st == 0 && ((seconds >= 15 && seconds < 30)|| 
 				(seconds >= 45 && seconds < 59)))){
-		printf("ft8 %d ON >>>>>>>>>>>>>>>>>\n", __LINE__);
 			tx_on(TX_SOFT);
 			ft8_start_tx(seconds % 15);
 			ft8_repeat--;
 		}
 	}
 	else if (ft8_protocol == MODE_MSG && ft8_repeat){
-		printf("ft8 %d ON >>>>>>>>>>>>>>>>>\n", __LINE__);
 		tx_on(TX_SOFT);
 		ft8_start_tx(seconds % 15);
 		ft8_repeat--;
 	} 
-	printf("  ft8 %d\n", __LINE__);
 }
 
 float ft8_next_sample(){
@@ -942,5 +933,4 @@ void ft8_abort(){
 
 void ft8_set_protocol(int protocol){
 	ft8_protocol = protocol;
-	printf("ft8 modem protcol is set to %d\n", ft8_protocol);
 }

@@ -221,7 +221,6 @@ void packtext77(const char* text, uint8_t* b77)
 {
     int length = strlen(text);
 
-		printf("pack retaining spaces");
 	/*
     // Skip leading and trailing spaces
     while (*text == ' ' && *text != 0)

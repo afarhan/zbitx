@@ -143,6 +143,9 @@ void make_header(const char *dest, const char *src,
 
 void send_packet(int freq, char *text){
 	//printf("Sending %s\n", text);
+	if (!text || strlen(text) == 0){
+		printf("send_packet got a null string\n");
+	}
 	printf("Sending(%u) on %dhz, [%s]\n", time_sbitx(), freq, text);
 	fflush(stdout);
 	ft8_tx(text, freq);
@@ -159,7 +162,6 @@ void send_update(){
 	strcat(notification, my_presence);
 	send_packet(field_int("TX_PITCH"), notification);
 	next_update = time_sbitx() + NOTIFICATION_REPEAT + ((rand() % 2) * 15);
-	printf("Next in %d seconds\n", next_update - time_sbitx());
 }
 
 
@@ -185,10 +187,7 @@ struct message *message_load(char *buff){
 	x = strtoul(strtok(NULL, "|"), NULL, 10);
 	m->flags = x;
 
-	x = strtoul(strtok(NULL, "|"), NULL, 10);
-	m->nsent = x;
-	
-	char *p = strtok(NULL, "|\n");
+	char *p = strtok(NULL, "\n");
 	m->length = strlen(p);
 	strcpy(m->data, p);
 	m->next = NULL;
@@ -381,11 +380,11 @@ struct message *add_chat(struct contact *pc, const char *message, int flags){
 
 	m->flags = flags;
 	
-	m->length = strlen(message);
 	m->next = NULL;
 	m->nsent = -1;
 
 	reduce_text(message, m->data);
+	m->length = strlen(m->data);
 
 	//append to the end of the list
 	struct message *prev = NULL;
@@ -442,8 +441,8 @@ void msg_save(char *filename){
 		fprintf(pf, "%s|%s|%d|%d|%d\n", pc->callsign, pc->status, 
 			pc->last_update, pc->frequency, pc->flags);
 			for (pm = pc->m_list; pm; pm = pm->next)
-				fprintf(pf, " %d|%d|%d|%d|%.*s\n", pm->time_created, pm->time_updated, pm->flags, 
-					pm->nsent, (int)(pm->length), pm->data);	
+				fprintf(pf, " %d|%d|%d|%s\n", pm->time_created, pm->time_updated, 
+					pm->flags, pm->data);	
 	}
 	fclose(pf);
 	save_messages = 0;
@@ -603,7 +602,7 @@ void msg_process(int freq, const char *text){
 	if (!mycall)
 		return;
 
-	printf("%u msg_process: %d [%s]\n", now % 600, freq, text);
+	printf("%u msg_process: %d [%s]\n", now % 60, freq, text);
 	if (!strncmp(text, "CQ ", 3)){
 		update_presence(freq, text + 3);	
 	}
@@ -634,7 +633,7 @@ void msg_process(int freq, const char *text){
 					//the header matches an outgoing message
 					//check only for recent messages
 					if (!strcmp(header, text) && !(m->flags & MSG_INCOMING)
-						&& m->time_updated + MSG_RETRY_SECONDS < now){
+						&& m->time_updated + MSG_RETRY_SECONDS > now){
 						printf("header matched with outgoing message [%s]\n", m->data);
 						m->flags = m->flags + MSG_ACKNOWLEDGE;
 						save_messages++;
@@ -725,7 +724,6 @@ void on_slot(){
 	if (active)
 		return;
 
-	printf("on_slot paused until %d\n", pause_until);
 	struct message *pm;
 	for (pc = contact_list; pc; pc = pc->next){
 		//if (now - pc->last_update < 600)
@@ -755,18 +753,23 @@ void on_slot(){
 							//pause starting other messages or sending an update
 							//until this is fully transmitted
 							pause_until = now + ((strlen(pm->data)/PACKET_SIZE)+3) * 15;
+							printf("Starting transmission of [%s]\n");
+							pm->time_updated = now;
+							send_packet(field_int("TX_PITCH"), packet);
+							return; // don't try sending any more
 						}
-						else {
+						else if (pm->nsent >= 0 && pm->nsent < strlen(pm->data)){
 							int nsize = pm->length - pm->nsent;
 							if (nsize > PACKET_SIZE)
 								nsize = PACKET_SIZE;	
 							strncpy(packet, pm->data + pm->nsent, nsize);
 							packet[nsize] = 0;
 							pm->nsent += nsize; 	
+							printf("Continuing transmission of [%s] from %d\n", pm->data, pm->nsent);
+							pm->time_updated = now;
+							send_packet(field_int("TX_PITCH"), packet);
+							return; // don't try sending any more
 						}
-						pm->time_updated = now;
-						send_packet(field_int("TX_PITCH"), packet);
-						return; // don't try sending any more
 					} //end of transmit message attempt
 					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGE) == 0
 						&& pm->time_updated + MSG_RETRY_SECONDS < now){			

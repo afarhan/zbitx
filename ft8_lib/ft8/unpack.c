@@ -236,7 +236,6 @@ int unpack_text(const uint8_t* a71, char* text)
         c14[idx] = charn(rem, 0);
     }
 
-		printf("Unpacked text without trimming %s\n", c14);
     //strcpy(text, trim(c14));
     strcpy(text, c14);
     return 0; // Success
