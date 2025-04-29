@@ -72,6 +72,7 @@ static unsigned int refresh_chat = 0;
 static unsigned int refresh_contacts = 0;
 static unsigned int next_save  = 0;
 static unsigned int pause_until = 0;
+static int save_messages = 0;
 
 static char my_callsign[MAX_CALLSIGN];
 static char my_presence[10];
@@ -362,6 +363,8 @@ struct contact *contact_add(const char *callsign, int frequency){
 	pc->next = contact_list; 
 	pc->m_list = NULL;
 	contact_list = pc;
+
+	save_messages++;
 	return pc;
 }
 
@@ -400,6 +403,7 @@ struct message *add_chat(struct contact *pc, const char *message, int flags){
 	
 	refresh_chat = 1;
 	return m;
+	save_messages++;
 }
 
 int packet_count(int length){
@@ -442,6 +446,7 @@ void msg_save(char *filename){
 					pm->nsent, (int)(pm->length), pm->data);	
 	}
 	fclose(pf);
+	save_messages = 0;
 	next_save = time_sbitx() + 300;
 }
 
@@ -580,6 +585,7 @@ int msg_post(const char *contact, const char *message){
 	pm->nsent = -1;
 	update_chat();
 	refresh_chat++;
+	save_messages++;
 	return 0;
 }
 
@@ -631,6 +637,7 @@ void msg_process(int freq, const char *text){
 						&& m->time_updated + MSG_RETRY_SECONDS < now){
 						printf("header matched with outgoing message [%s]\n", m->data);
 						m->flags = m->flags + MSG_ACKNOWLEDGE;
+						save_messages++;
 						return;
 					}
 					else
@@ -689,9 +696,9 @@ void msg_process(int freq, const char *text){
 					m->flags = m->flags + MSG_ACKNOWLEDGE;
 					pc->msg_buff[0] = 0;
 					pc->msg_timeout = 0;
-					
 					//release the buffer
 				}
+				save_messages++;
 				//even if the message didnt add up, we reset the msg buff
 				//even if the message didnt add up, we reset the msg buff
 			}
@@ -794,7 +801,7 @@ void msg_poll(){
 
 	last_tick = now;
 
-	if (next_save < now)
+	if (next_save < now  || save_messages > 0)
 		msg_save("/home/pi/sbitx/data/messenger.txt");
 
 	//from here, we do stuff on every 15th second
