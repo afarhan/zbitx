@@ -18,6 +18,7 @@
 #define MAX_MESSAGE 150
 #define MSG_RETRY_SECONDS  480 
 #define NOTIFICATION_REPEAT 300 
+
 /*
 	1. Blocks: 
 	1.1 Every message is split into one or more blocks. 
@@ -29,8 +30,6 @@
 	if it detects a new message header, it initializes the
 	corresponding contact to start accumulating all the packets.
 	At the end of the receiving all the packets and checking the packet integrity
-
-
 */
 
 #define NOTIFICATION_PERIOD 300 //5 minutes, 300 seconds
@@ -739,11 +738,11 @@ void on_slot(){
 						pm->flags = MSG_INCOMING; //blank out the acknowledgement due
 					}
 				}
+		//for all outgoing packets
 				else if(now - pc->last_update < NOTIFICATION_REPEAT *2){
 					char packet[20];			
-		//for all outgoing packets
 				
-					if(pm->nsent < pm->length){
+					if(pm->nsent < pm->length && !(pm->flags & MSG_ACKNOWLEDGE)){
 						//send out the header, starting the tx process only if we had recently seen the contact
 						//don't start a new message when tx has been paused
 						if (pm->nsent == -1 && now - pc->last_update < (NOTIFICATION_REPEAT * 2)
@@ -771,8 +770,9 @@ void on_slot(){
 							return; // don't try sending any more
 						}
 					} //end of transmit message attempt
-					else if (pm->nsent >= pm->length && (pm->flags & MSG_ACKNOWLEDGE) == 0
+					else if (pm->nsent >= pm->length && pm->flags == 0  // MSG_INCOMING is 0, MSG_ACK is 0
 						&& pm->time_updated + MSG_RETRY_SECONDS < now){			
+							printf("Resetting to retransmit [%s]\n", pm->data);
 							pm->nsent = -1;	
 					}
 				}
