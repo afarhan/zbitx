@@ -37,7 +37,7 @@
 #define MSG_INCOMING  		0x00000001
 #define MSG_ACKNOWLEDGE  0x00000002
 
-#define MAX_MSG_LENGTH (52)
+#define MAX_MSG_LENGTH (120)
 struct message {
 	uint32_t time_created;
 	uint32_t time_updated;
@@ -651,9 +651,9 @@ void msg_process(int freq, const char *text){
 				int nslots = checksum[2] - '0';
 				printf("got %d slots\n", nslots);
 				pc->msg_timeout = now + (15 * nslots);
-				printf("msg_timeout %u vs now %u\n", pc->msg_timeout, now);
+				printf("msg_timeout set to %u vs now %u\n", pc->msg_timeout, now);
 				strcpy(pc->msg_buff, text);
-				pause_until = now + (15 *(nslots + 4));
+				pause_until = now + (15 * nslots);
 			}
 		}
 		else if (pc = contact_by_freq(freq, text)){
