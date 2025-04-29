@@ -17,6 +17,7 @@ void msg_select(char *msg);
 int msg_post(const char *callsign, const char *message);
 void msg_add_contact(const char *callsign);
 void msg_remove_contact(const char *callsign);
+void msg_presence(const char *new_presence);
 
 void chat_ui_init();
 void clear_contact_list();

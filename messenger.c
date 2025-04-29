@@ -49,10 +49,6 @@ struct message {
 	char data[1];
 };
 
-static int next_update = 0;
-static int refresh_chat = 0;
-static int refresh_contacts = 0;
-static int next_save  = 0;
 
 #define MAX_CALLSIGN 20 
 #define CONTACT_FLAG_SAVED 1
@@ -69,14 +65,18 @@ struct contact {
 	struct contact *next; 
 }; 
 
-struct contact *contact_list = NULL;
+static struct contact *contact_list = NULL;
+static int next_update = 0;
+static int refresh_chat = 0;
+static int refresh_contacts = 0;
+static int next_save  = 0;
 
-char my_callsign[MAX_CALLSIGN];
-char my_status[10];
+static char my_callsign[MAX_CALLSIGN];
+static char my_presence[10];
 uint32_t my_frequency = 7097000;
 char selected_contact[MAX_CALLSIGN];
-void update_chat();
-void update_contacts();
+//void update_chat();
+//void update_contacts();
 
 struct contact *contact_by_callsign(const char *callsign);
 
@@ -146,28 +146,17 @@ void send_packet(int freq, char *text){
 }
 
 void send_update(){
-	if (!strcmp(field_str("PRESENCE"), "SILENT"))
+	
+	if (!strcmp(my_presence, "SILENT"))
 		return;
 	char notification[20];
-	char const *presence = field_str("PRESENCE");
 	strcpy(notification, "+");
 	strcat(notification, field_str("MYCALLSIGN"));
 	strcat(notification, " ");
-	if (!strcmp(presence, "READY"))
-		strcat(notification, "QRV");
-	else if (!strcmp(presence, "AWAY"))
-		strcat(notification, "AWY");
-	else if (!strcmp(presence, "SILENT"))
-		strcat(notification, "QRT");
-	else if (!strcmp(presence, "BUSY"))
-		strcat(notification, "QRL");
-	else
-		strcat(notification, presence);
-
+	strcat(notification, my_presence);
+	send_packet(field_int("TX_PITCH"), notification);
 	next_update = time_sbitx() + NOTIFICATION_REPEAT + ((rand() % 2) * 15);
 	printf("Next in %d seconds\n", next_update - time_sbitx());
-	fflush(stdout);
-	send_packet(field_int("TX_PITCH"), notification);
 }
 
 
@@ -419,8 +408,10 @@ int packet_count(int length){
 
 void msg_init(){
 
+	strcpy(my_presence, "READY");
 	selected_contact[0] = 0;
 	next_save  = time_sbitx() + 300;
+	next_update= time_sbitx() + 15; //next available slot	
 	chat_ui_init();
 
 	msg_load("/home/pi/sbitx/data/messenger.txt");
@@ -709,8 +700,9 @@ void on_slot(){
 	//check if we are in teh middle of receiving any message
 	int active = 0;
 	struct contact *pc;
+	//give two slots time out
 	for (pc = contact_list; pc; pc = pc->next){
-		if (pc->msg_timeout >= now)
+		if (pc->msg_timeout + 30 >= now)
 			active++;
 	}
 
@@ -732,7 +724,7 @@ void on_slot(){
 						pm->flags = MSG_INCOMING; //blank out the acknowledgement due
 					}
 				}
-				else if(now - pc->last_update < NOTIFICATION_REPEAT *2){
+				else { //if(now - pc->last_update < NOTIFICATION_REPEAT *2){
 					char packet[20];			
 		//for all outgoing packets
 					if(pm->nsent < pm->length){
@@ -811,6 +803,7 @@ void msg_add_contact(const char *callsign){
 	*q = 0;
 
 	struct contact *pc = contact_add(newcall, 0);
+	update_contacts();
 	refresh_contacts++;
 }
 
@@ -839,4 +832,9 @@ void msg_remove_contact(const char *callsign){
 		}
 		prev = pc;
 	}
+}
+
+void msg_presence(const char *new_presence){
+	strcpy(my_presence, new_presence);
+	next_update = time_sbitx();
 }

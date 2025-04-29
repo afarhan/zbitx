@@ -32,6 +32,7 @@ static GtkWidget *chat_window = NULL;
 static GtkWidget *contacts_list = NULL;
 static GtkWidget *text_view = NULL;
 static GtkWidget *header = NULL;
+static GtkWidget *presence_combo = NULL;
 
 /* Structure to hold widgets we need to access from callbacks */
 typedef struct {
@@ -216,6 +217,38 @@ static gboolean contacts_list_button_press_cb(GtkWidget *widget, GdkEventButton 
     return FALSE;
 }
 
+const char*get_presence(){
+	return gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(presence_combo));
+}
+
+void set_presence(const gchar *selection_text) {
+    GtkTreeModel *model = gtk_combo_box_get_model(GTK_COMBO_BOX(presence_combo));
+    GtkTreeIter iter;
+    gboolean valid;
+    gint index = 0;
+    gboolean found = FALSE;
+
+    /* Start with the first element in the model */
+    valid = gtk_tree_model_get_iter_first(model, &iter);
+    while (valid) {
+        gchar *text = NULL;
+        /* Assuming the text is stored in column 0 */
+        gtk_tree_model_get(model, &iter, 0, &text, -1);
+        if (text && g_strcmp0(text, selection_text) == 0) {
+            gtk_combo_box_set_active(GTK_COMBO_BOX(presence_combo), index);
+            found = TRUE;
+            g_free(text);
+            break;
+        }
+        g_free(text);
+        index++;
+        valid = gtk_tree_model_iter_next(model, &iter);
+    }
+    if (!found) {
+        g_print("Warning: '%s' is not a valid presence option.\n", selection_text);
+    }
+}
+
 void on_contact_selected(GtkListBox *box, GtkListBoxRow *row, gpointer ud){
 	GtkWidget *label = gtk_bin_get_child(GTK_BIN(row));
 	const gchar *contact_text = gtk_label_get_text(GTK_LABEL(label));
@@ -226,6 +259,13 @@ void on_contact_selected(GtkListBox *box, GtkListBoxRow *row, gpointer ud){
 	callsign[i] = 0;
 	g_print("Selected contact: %s\n", callsign);
 	msg_select(callsign);
+}
+
+void on_presence_changed(GtkComboBox *combo, gpointer user_data){
+	const char *selection = gtk_combo_box_text_get_active_text(GTK_COMBO_BOX_TEXT(combo));
+	if (selection)
+		msg_presence(selection);
+	
 }
 
 void chat_title(const char *title){
@@ -271,18 +311,22 @@ void chat_ui_init(){
    /* --- HEADER BAR --- */
    header = gtk_header_bar_new();
    gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header), FALSE);
-   gtk_header_bar_set_title(GTK_HEADER_BAR(header), "Chat App");
+   gtk_header_bar_set_title(GTK_HEADER_BAR(header), "(Select a Contact)");
    gtk_box_pack_start(GTK_BOX(vbox), header, FALSE, FALSE, 0);
 
    /* Presence Combo Box on the right end */
-   GtkWidget *presence_combo = gtk_combo_box_text_new();
-   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "Ready");
-   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "Busy");
-   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "Idle");
-   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "Away");
-   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "Silent");
+   presence_combo = gtk_combo_box_text_new();
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "READY");
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "AWAY");
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "BUSY");
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "SILENT");
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "QUD");
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "QSP");
+   gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(presence_combo), "CQ");
    gtk_combo_box_set_active(GTK_COMBO_BOX(presence_combo), 0);
    gtk_header_bar_pack_end(GTK_HEADER_BAR(header), presence_combo);
+   g_signal_connect(presence_combo, "changed", G_CALLBACK(on_presence_changed), NULL);
+	
 
    /* New "Add.." button on the left side of the header bar */
    GtkWidget *add_button = gtk_button_new_with_label("Add..");
