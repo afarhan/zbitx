@@ -697,7 +697,7 @@ struct field main_controls[] = {
     "", 1, 10, 1, FT8_CONTROL},
 
 	//MSG controls
-	{"#msg_presence", NULL, 415, 5, 40, 40, "PRESENCE", 40, "Ready", FIELD_SELECTION, FONT_FIELD_VALUE, 
+	{"#msg_presence", NULL, 415, -1000, 40, 40, "PRESENCE", 40, "Ready", FIELD_SELECTION, FONT_FIELD_VALUE, 
 		"READY/AWAY/BUSY/SILENT/QUD/QSP/CQ", 0, 1024, 1,COMMON_CONTROL},
 	{"#msg_contact", NULL, 415, 50, 50, 50, "CONTACT", 50, "LIST", FIELD_STATIC, FONT_LOG, 
 		"nobody", 0,128,0,0},

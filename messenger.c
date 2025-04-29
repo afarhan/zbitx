@@ -23,12 +23,13 @@
 	1.1 Every message is split into one or more blocks. 
 	1.2 The messages can only have a single case, numbers, stop, comma, 
 	slash, plus and dash. (same as FT8).
-	1.3 Maximum message size is limited to 150 characters
+	1.3 Maximum message size is limited to 50 characters
 
-	1234567890123
-	fb,gotmail?AA
-	hi,alwl i hp+
-	 gng2del2mrAA 
+	msg_process() is called with every raw packet decoded.
+	if it detects a new message header, it initializes the
+	corresponding contact to start accumulating all the packets.
+	At the end of the receiving all the packets and checking the packet integrity
+
 
 */
 
@@ -66,17 +67,18 @@ struct contact {
 }; 
 
 static struct contact *contact_list = NULL;
-static int next_update = 0;
-static int refresh_chat = 0;
-static int refresh_contacts = 0;
-static int next_save  = 0;
+static unsigned int next_update = 0;
+static unsigned int refresh_chat = 0;
+static unsigned int refresh_contacts = 0;
+static unsigned int next_save  = 0;
+static unsigned int pause_until = 0;
 
 static char my_callsign[MAX_CALLSIGN];
 static char my_presence[10];
 uint32_t my_frequency = 7097000;
 char selected_contact[MAX_CALLSIGN];
 //void update_chat();
-//void update_contacts();
+void update_contacts();
 
 struct contact *contact_by_callsign(const char *callsign);
 
@@ -239,10 +241,15 @@ void update_chat(){
 					t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
 			}
 			else{
-				sprintf(message, "%s (%d/%d/%d %02d:%02d) %d/%d\n%.*s\n", 
-					field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
-					t->tm_hour, t->tm_min, pm->nsent, pm->length, 
-					(int)(pm->length), pm->data);	
+				if (pm->flags & MSG_ACKNOWLEDGE)
+					sprintf(message, "%s (%d/%d/%d %02d:%02d) Ack\n%.*s\n", 
+						field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+						t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
+				else 
+					sprintf(message, "%s (%d/%d/%d %02d:%02d) %d/%d\n%.*s\n", 
+						field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+						t->tm_hour, t->tm_min, pm->nsent, pm->length, 
+						(int)(pm->length), pm->data);	
 			}
 
 		}
@@ -584,14 +591,13 @@ void msg_process(int freq, const char *text){
 
 	strcpy(msg_local, text);
 
-	printf("msg_process %s\n", msg_local);
 
 	//this may happen at the start, before
 	//the user_settings.ini is loaded
 	if (!mycall)
 		return;
 
-	printf("msg_process: %d [%s]\n", freq, text);
+	printf("%u msg_process: %d [%s]\n", now % 600, freq, text);
 	if (!strncmp(text, "CQ ", 3)){
 		update_presence(freq, text + 3);	
 	}
@@ -613,15 +619,17 @@ void msg_process(int freq, const char *text){
 		if (me && contact && checksum && !strcmp(contact, mycall) 
 			&& strlen(checksum) == 4 && strlen(contact) <= 8
 			&& checksum[3] == '0'){
-			printf("Received acknowledgment\n");
+			printf("Received an acknowledgment[%s]\n", text);
 			pc = contact_by_callsign(me);
 			if (pc){
 				for (struct message *m = pc->m_list; m; m = m->next){
 					char header[100];
 					make_header(pc->callsign, contact, m->data, header);
 					//the header matches an outgoing message
-					if (!strcmp(header, text) && !(m->flags & MSG_INCOMING)){
-						printf("matched with %s\n", m->data);
+					//check only for recent messages
+					if (!strcmp(header, text) && !(m->flags & MSG_INCOMING)
+						&& m->time_updated + MSG_RETRY_SECONDS < now){
+						printf("header matched with outgoing message [%s]\n", m->data);
 						m->flags = m->flags + MSG_ACKNOWLEDGE;
 						return;
 					}
@@ -649,6 +657,7 @@ void msg_process(int freq, const char *text){
 				pc->msg_timeout = now + (15 * nslots);
 				printf("msg_timeout %u vs now %u\n", pc->msg_timeout, now);
 				strcpy(pc->msg_buff, text);
+				pause_until = now + (15 *(nslots + 4));
 			}
 		}
 		else if (pc = contact_by_freq(freq, text)){
@@ -709,6 +718,7 @@ void on_slot(){
 	if (active)
 		return;
 
+	printf("on_slot paused until %d\n", pause_until);
 	struct message *pm;
 	for (pc = contact_list; pc; pc = pc->next){
 		//if (now - pc->last_update < 600)
@@ -720,18 +730,24 @@ void on_slot(){
 						char packet[100];
 						make_header(field_str("MYCALLSIGN"), pc->callsign, pm->data, packet);
 						send_packet(field_int("TX_PITCH"), packet);
-						printf("sending acknowledgment of %s\n", packet);
+						printf(">>>>>>>>>>>>>>>>>>>sending acknowledgment of %s\n", packet);
 						pm->flags = MSG_INCOMING; //blank out the acknowledgement due
 					}
 				}
-				else { //if(now - pc->last_update < NOTIFICATION_REPEAT *2){
+				else if(now - pc->last_update < NOTIFICATION_REPEAT *2){
 					char packet[20];			
 		//for all outgoing packets
+				
 					if(pm->nsent < pm->length){
 						//send out the header, starting the tx process only if we had recently seen the contact
-						if (pm->nsent == -1 && now - pc->last_update < (NOTIFICATION_REPEAT * 2)){
+						//don't start a new message when tx has been paused
+						if (pm->nsent == -1 && now - pc->last_update < (NOTIFICATION_REPEAT * 2)
+							&& pause_until < now){
 							make_header(pc->callsign, field_str("MYCALLSIGN"), pm->data, packet);
 							pm->nsent = 0;	
+							//pause starting other messages or sending an update
+							//until this is fully transmitted
+							pause_until = now + ((strlen(pm->data)/PACKET_SIZE)+3) * 15;
 						}
 						else {
 							int nsize = pm->length - pm->nsent;
@@ -756,7 +772,7 @@ void on_slot(){
 	} // next contact
 
 	//if nothing else was sent, send the notification
-	if (next_update < now){
+	if (next_update < now && pause_until < now){
 		printf("sending update %u vs %u\n", next_update, now);
 		send_update();
 	}
