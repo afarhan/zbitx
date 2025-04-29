@@ -234,23 +234,15 @@ void update_chat(){
 		time_t msg_time = pm->time_created;
 		struct tm *t = gmtime(&msg_time);
 		if(!(pm->flags & MSG_INCOMING)){
-			if (pm->nsent == -1){
-				sprintf(message, "%s (%d/%d/%d %02d:%02d) New \n%.*s\n", 
+			if (pm->flags & MSG_ACKNOWLEDGE)
+				sprintf(message, "%s (%d/%d/%d %02d:%02d) Ack\n%.*s\n", 
 					field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
 					t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
-			}
-			else{
-				if (pm->flags & MSG_ACKNOWLEDGE)
-					sprintf(message, "%s (%d/%d/%d %02d:%02d) Ack\n%.*s\n", 
-						field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
-						t->tm_hour, t->tm_min, (int)(pm->length), pm->data);	
-				else 
-					sprintf(message, "%s (%d/%d/%d %02d:%02d) %d/%d\n%.*s\n", 
-						field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
-						t->tm_hour, t->tm_min, pm->nsent, pm->length, 
-						(int)(pm->length), pm->data);	
-			}
-
+			else 
+				sprintf(message, "%s (%d/%d/%d %02d:%02d) %d/%d\n%.*s\n", 
+					field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+					t->tm_hour, t->tm_min, pm->nsent, pm->length, 
+					(int)(pm->length), pm->data);	
 		}
 		else {
 			sprintf(message, "%s (%d/%d/%d %02d:%02d)\n%.*s\n", 
