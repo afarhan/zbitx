@@ -581,7 +581,6 @@ int msg_post(const char *contact, const char *message){
 
 	struct message *pm = add_chat(pc, message, 0);
 	pm->nsent = -1;
-	update_chat();
 	refresh_chat++;
 	save_messages++;
 	return 0;
@@ -619,7 +618,7 @@ void msg_process(int freq, const char *text){
 		char *checksum = strtok(NULL, " ");
 
 		//does this look like an acknowledgment?
-		//the firt callsign is of the contact and second if of the sender(us)
+		//the first callsign is of the contact and second if of the sender(us)
 		if (me && contact && checksum && !strcmp(contact, mycall) 
 			&& strlen(checksum) == 4 && strlen(contact) <= 8
 			&& checksum[3] == '0'){
@@ -634,7 +633,7 @@ void msg_process(int freq, const char *text){
 					if (!strcmp(header, text) && !(m->flags & MSG_INCOMING)
 						&& m->time_updated + MSG_RETRY_SECONDS > now){
 						printf("header matched with outgoing message [%s]\n", m->data);
-						m->flags = m->flags + MSG_ACKNOWLEDGE;
+						m->flags = m->flags | MSG_ACKNOWLEDGE;
 						save_messages++;
 						return;
 					}
@@ -691,7 +690,7 @@ void msg_process(int freq, const char *text){
 				if (!strncmp(ack, pc->msg_buff, strlen(ack))){
 					printf("sending acknowledgement of [%s]\n", p);
 					struct message *m = add_chat(pc, p, MSG_INCOMING);
-					m->flags = m->flags + MSG_ACKNOWLEDGE;
+					m->flags = m->flags | MSG_ACKNOWLEDGE;
 					pc->msg_buff[0] = 0;
 					pc->msg_timeout = 0;
 					//release the buffer
