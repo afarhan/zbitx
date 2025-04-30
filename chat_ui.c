@@ -80,6 +80,16 @@ void chat_append(const char *new_text) {
 	gtk_text_view_scroll_to_iter(GTK_TEXT_VIEW(text_view), &end_iter, 0.0, FALSE, 0, 1.0);	
 }
 
+
+void chat_alert(const char *message){
+	GtkWidget *alert_box = 
+		gtk_message_dialog_new(GTK_WINDOW(chat_window),
+			GTK_DIALOG_MODAL, GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
+			message);
+	gtk_dialog_run(GTK_DIALOG(alert_box));
+	gtk_widget_destroy(alert_box);
+}
+
 /*
 void chat_scroll_to_end(){
   GtkTextIter end_iter;
@@ -169,8 +179,10 @@ static void on_send_button_clicked(GtkButton *button, gpointer user_data) {
     const gchar *entry_text = gtk_entry_get_text(GTK_ENTRY(widgets->entry));
     if (g_strcmp0(entry_text, "") != 0) {
       //chat_append(entry_text);
-			msg_post(NULL, entry_text);
-      gtk_entry_set_text(GTK_ENTRY(widgets->entry), "");
+			if(msg_post(NULL, entry_text))
+				chat_alert("Select a contact to send the messsage.");
+			else
+      	gtk_entry_set_text(GTK_ENTRY(widgets->entry), "");
     }
 }
 

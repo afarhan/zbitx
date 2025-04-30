@@ -25,3 +25,4 @@ void add_item_to_contact_list(const char *c);
 void chat_clear();
 void chat_title(const char *title);
 void chat_append(const char *text);
+void chat_alert(const char *message);

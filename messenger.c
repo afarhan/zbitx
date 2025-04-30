@@ -653,7 +653,7 @@ void msg_process(int freq, const char *text){
 				pc->msg_timeout = now + (15 * nslots);
 				printf("msg_timeout set to %u vs now %u\n", pc->msg_timeout, now);
 				strcpy(pc->msg_buff, text);
-				pause_until = now + (15 * nslots);
+				pause_until = now + (15 * (nslots + 2));
 			}
 		}
 		else if (pc = contact_by_freq(freq, text)){
