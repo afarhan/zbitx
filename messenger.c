@@ -267,17 +267,14 @@ void update_contacts(){
 
 	for (pc = contact_list; pc; pc = pc->next){
 		if (pc->last_update > time_sbitx() - 600){
-			sprintf(update_line, "#G*%s #S%s\n", pc->callsign, pc->status);
-			//write_console(0, update_line);
 			sprintf(update_line, "%s - %s", pc->callsign, pc->status);
 			add_item_to_contact_list(update_line);
 		}
 		else{
-			sprintf(update_line, "*%s %s\n", pc->callsign, pc->status);
-			//write_console(0, update_line);
 			sprintf(update_line, "%s - Inactive", pc->callsign);
 			add_item_to_contact_list(update_line);
 		}
+		
 	}
 	refresh_contacts = 0;
 }
@@ -427,7 +424,7 @@ void msg_save(char *filename){
 	printf("Saving the messages\n");
 	if(!pf)
 		return;
-
+/* first save the online ones */
 	for (pc = contact_list; pc; pc = pc->next){
 		fprintf(pf, "%s|%s|%d|%d|%d\n", pc->callsign, pc->status, 
 			pc->last_update, pc->frequency, pc->flags);

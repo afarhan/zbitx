@@ -215,6 +215,7 @@ struct Queue q_web;
 
 uint8_t zbitx_available = 0;
 int update_logs = 0;
+uint8_t zbitx_update_messenger = 0;
 #define ZBITX_I2C_ADDRESS 0xa
 void zbitx_init();
 void zbitx_poll(int all);
@@ -4088,6 +4089,80 @@ static void zbitx_logs(){
 	fclose(pf);
 }
 
+static void zbitx_messenger(){
+	static unsigned int next_messenger_update = 0;
+	char path[200];	//find the MAX_PATH and replace 200 with it
+	char row_response[1000], row[1000];
+
+	//wait until the next time
+	if (next_messenger_update > time_sbitx())
+		return;
+	
+	const char *contact = field_str("CONTACT");
+	sprintf(path, "%s/sbitx/data/messenger.txt", getenv("HOME"));
+	FILE *pf = fopen(path, "r");
+	if (!pf)
+		return;
+	time_t now = time_sbitx();
+
+	strcpy(row_response, "CONTACT CLEAR}");
+	i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
+		strlen(row_response), row_response);
+
+	//repeat this twice, first only the active onces, the teh offline 
+	while(fgets(row, sizeof(row), pf)){
+		if (isalnum(*row)){
+			int l = strlen(row);
+			if (row[l-1] == '\n')
+				row[l-1] = 0;
+
+			char *callsign = strtok(row, "|");
+			char *status = strtok(NULL,"|");
+			uint32_t x = strtoul(strtok(NULL, "|"), NULL, 10);
+
+			if (x + 600 >= now)
+				continue;
+
+			if (isdigit(*status))
+				sprintf(row_response, "CONTACT %s #ROnline}", callsign, status);
+			else
+				sprintf(row_response, "CONTACT %s #S%s}", callsign, status);
+
+			printf(row_response);
+			i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
+				strlen(row_response), row_response);
+		}
+	}
+	fclose(pf);
+
+	pf = fopen(path, "r");
+	if (!pf)
+		return;
+	//repeat this twice, first only the active onces, the teh offline 
+	while(fgets(row, sizeof(row), pf)){
+		if (isalnum(*row)){
+			int l = strlen(row);
+			if (row[l-1] == '\n')
+				row[l-1] = 0;
+
+			char *callsign = strtok(row, "|");
+			char *status = strtok(NULL,"|");
+			uint32_t x = strtoul(strtok(NULL, "|"), NULL, 10);
+			if(x+600 > now)
+				continue;
+			sprintf(row_response, "CONTACT %s #DInactive}", callsign, status);
+			printf(row_response);
+			i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
+				strlen(row_response), row_response);
+		}
+	}
+	fclose(pf);
+
+	next_messenger_update = time_sbitx() + 15;
+}
+
+// it is called from the webserver thread
+//not the main gtk thread's ui_tick
 void zbitx_poll(int all){
 	char buff[3000];
 	static unsigned int last_update = 0;
@@ -4122,6 +4197,8 @@ void zbitx_poll(int all){
 		}
 	}
 	last_update = this_time;
+
+	zbitx_messenger();
 	
 	//check if the console q has any new updates
 	while (q_length(&q_zbitx_console) > 0){
@@ -4155,6 +4232,8 @@ void zbitx_poll(int all){
 		zbitx_logs();
 		update_logs = 0;
 	}
+	if (zbitx_update_messenger)
+		zbitx_messenger();
 
 	int  reply_length;
 
@@ -4169,13 +4248,14 @@ void zbitx_poll(int all){
 			remote_execute(ft8_message);
 			printf("FT8 processing from zbitx\n");
 		}
-		else{
-			if (!strncmp(buff, "OPEN", 4)){
+		else if (!strncmp(buff, "OPEN", 4)){
 				update_logs = 1;
 				printf("<<<< refresh the log >>>>>\n");
-			}
-			remote_execute(buff);
 		}
+		else if (!strncmp(buff, "CONTACTS", 7))
+			zbitx_update_messenger = 1;
+		else
+			remote_execute(buff);
 	}
 	last_update = this_time;
 }
