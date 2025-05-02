@@ -33,6 +33,7 @@ static GtkWidget *contacts_list = NULL;
 static GtkWidget *text_view = NULL;
 static GtkWidget *header = NULL;
 static GtkWidget *presence_combo = NULL;
+static unsigned int last_update_from_main = 0;
 
 /* Structure to hold widgets we need to access from callbacks */
 typedef struct {
@@ -179,7 +180,7 @@ static void on_send_button_clicked(GtkButton *button, gpointer user_data) {
     const gchar *entry_text = gtk_entry_get_text(GTK_ENTRY(widgets->entry));
     if (g_strcmp0(entry_text, "") != 0) {
       //chat_append(entry_text);
-			if(msg_post(NULL, entry_text))
+			if(msg_post(entry_text))
 				chat_alert("Select a contact to send the messsage.");
 			else
       	gtk_entry_set_text(GTK_ENTRY(widgets->entry), "");

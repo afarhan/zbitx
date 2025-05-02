@@ -2362,7 +2362,9 @@ static void layout_ui(){
 			field_move("SIDETONE", 675, y2-47, 73, 45);
 		break;
 		case MODE_MSG:
-			field_move("ESC", 5, y1, 40, 45);
+			field_move("ESC", 5, y1, 45, 45);
+			field_move("PRESENCE", 50, y1, 95, 45);
+			field_move("CONTACT", 150, y1, 90, 45);
 			field_move("TX_PITCH", 600, y2-47, 73, 45);
 			field_move("CONSOLE", 5, y1+50, 350, y2-y1-55);
 			//move out the spectrum et al
@@ -2907,7 +2909,7 @@ int do_text(struct field *f, cairo_t *gfx, int event, int a, int b, int c){
 		}
 		else if ((a =='\n' || a == MIN_KEY_ENTER) && !strcmp(f_mode->value, "MSG") 
 			&& f->value[0] != COMMAND_ESCAPE){
-			msg_post(NULL, f->value); //default destinatiotion is selected contact
+			msg_post(f->value); //default destinatiotion is selected contact
 			f->value[0] = 0;		
 		}
 		else if (a >= ' ' && a <= 127 && strlen(f->value) < f->max-1){
@@ -4089,11 +4091,62 @@ static void zbitx_logs(){
 	fclose(pf);
 }
 
+static char zbitx_msg_callsign[30];
+void zbitx_append_chat(char *callsign, char *buff, char *message){
+
+	while(*buff == ' ' || *buff == '\t')
+		*buff++;
+	char local[100];
+	strcpy(local, buff);
+
+	// time_created
+	unsigned int x = strtoul(strtok(buff, "|"), NULL, 10);
+	if (x == 0)
+		return;
+	
+	time_t time_created = x;
+	
+	x = strtoul(strtok(NULL, "|"), NULL, 10);
+	if (x == 0)
+		return;
+	time_t time_updated = x;
+
+	x = strtoul(strtok(NULL, "|"), NULL, 10);
+	unsigned int flags = x;
+
+	char *p = strtok(NULL, "\n");
+	time_t msg_time = time_created;
+	struct tm *t = gmtime(&msg_time);
+	if(!(flags & MSG_INCOMING)){
+		if (flags & MSG_ACKNOWLEDGE){
+			sprintf(message, "CHAT #G%s#D (%d/%d/%d %02d:%02d) Ack#\n   #S%s\n}", 
+				field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+				t->tm_hour, t->tm_min,  p);
+		}	
+		else 
+			sprintf(message, "CHAT #R%s#D (%d/%d/%d %02d:%02d) Waiting#\n   #W%s\n}", 
+				field_str("MYCALLSIGN"), t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+				t->tm_hour, t->tm_min, p);	
+	}
+	else {
+		sprintf(message, "CHAT #G%s#D  (%d/%d/%d %02d:%02d)#\n  #S%s\n}", 
+			callsign, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, 
+			t->tm_hour, t->tm_min, p);	
+	}
+	printf("sending [%s]\n", message);
+	i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
+		strlen(message), message);
+}
+
 static void zbitx_messenger(){
 	static unsigned int next_messenger_update = 0;
 	char path[200];	//find the MAX_PATH and replace 200 with it
 	char row_response[1000], row[1000];
 
+	if(strcmp(f_mode->value, "MSG"))
+		return;
+
+	zbitx_msg_callsign[0] = 0;
 	//wait until the next time
 	if (next_messenger_update > time_sbitx())
 		return;
@@ -4105,33 +4158,52 @@ static void zbitx_messenger(){
 		return;
 	time_t now = time_sbitx();
 
-	strcpy(row_response, "CONTACT CLEAR}");
+	strcpy(row_response, "CONTACTS CLEAR}");
 	i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
 		strlen(row_response), row_response);
 
+	int send_chat = 0;
 	//repeat this twice, first only the active onces, the teh offline 
 	while(fgets(row, sizeof(row), pf)){
-		if (isalnum(*row)){
-			int l = strlen(row);
-			if (row[l-1] == '\n')
-				row[l-1] = 0;
+		int l = strlen(row); //strip the ending new line
+		if (row[l-1] == '\n')
+			row[l-1] = 0;
 
+		if (*row == ' ' && zbitx_msg_callsign[0]){
+			sprintf(row_response, "CHAT %s}", row+1);
+			//printf("%s\n", row_response);
+			zbitx_append_chat(zbitx_msg_callsign, row+1, row_response);
+			
+			if (strlen(row_response) < 200)
+				i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
+					strlen(row_response), row_response);
+			else
+				printf("msg too long for i2c\n");
+		}
+		else if (isalnum(*row)){
 			char *callsign = strtok(row, "|");
 			char *status = strtok(NULL,"|");
 			uint32_t x = strtoul(strtok(NULL, "|"), NULL, 10);
+			//check if this is the selected contact
+			if (!strcmp(callsign, contact)){
+				printf("chat messages of %s\n", callsign);
+				strcpy(zbitx_msg_callsign, callsign);
+			}
+			else{
+				zbitx_msg_callsign[0] = 0;
+			}
 
 			if (x + 600 >= now)
 				continue;
 
 			if (isdigit(*status))
-				sprintf(row_response, "CONTACT %s #ROnline}", callsign, status);
+				sprintf(row_response, "CONTACTS %s #ROnline}", callsign, status);
 			else
-				sprintf(row_response, "CONTACT %s #S%s}", callsign, status);
-
-			printf(row_response);
+				sprintf(row_response, "CONTACTS %s #S%s}", callsign, status);
 			i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
 				strlen(row_response), row_response);
 		}
+		
 	}
 	fclose(pf);
 
@@ -4150,8 +4222,7 @@ static void zbitx_messenger(){
 			uint32_t x = strtoul(strtok(NULL, "|"), NULL, 10);
 			if(x+600 > now)
 				continue;
-			sprintf(row_response, "CONTACT %s #DInactive}", callsign, status);
-			printf(row_response);
+			sprintf(row_response, "CONTACTS %s #DInactive}", callsign, status);
 			i2cbb_write_i2c_block_data(ZBITX_I2C_ADDRESS, '{', 
 				strlen(row_response), row_response);
 		}

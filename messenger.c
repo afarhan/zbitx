@@ -34,8 +34,6 @@
 
 #define NOTIFICATION_PERIOD 300 //5 minutes, 300 seconds
 
-#define MSG_INCOMING  		0x00000001
-#define MSG_ACKNOWLEDGE  0x00000002
 
 #define MAX_MSG_LENGTH (120)
 struct message {
@@ -76,7 +74,6 @@ static int save_messages = 0;
 static char my_callsign[MAX_CALLSIGN];
 static char my_presence[10];
 uint32_t my_frequency = 7097000;
-char selected_contact[MAX_CALLSIGN];
 //void update_chat();
 void update_contacts();
 
@@ -407,7 +404,6 @@ int packet_count(int length){
 void msg_init(){
 
 	strcpy(my_presence, "READY");
-	selected_contact[0] = 0;
 	next_save  = time_sbitx() + 300;
 	next_update= time_sbitx() + 15; //next available slot	
 	chat_ui_init();
@@ -543,24 +539,20 @@ void update_presence(int freq, const char *notification){
 }
 
 void msg_select(char *callsign){
-	strcpy(selected_contact, callsign);
 	field_set("CONTACT", callsign);
 	
-	struct contact *pc = contact_by_callsign(selected_contact);
+	struct contact *pc = contact_by_callsign(callsign);
 	if (!pc)
 		return;
 	update_chat();
-	
 }
 
-int msg_post(const char *contact, const char *message){
-	if (!contact && selected_contact[0] == 0){
+int msg_post(const char *message){
+	const char *contact = field_str("CONTACT");
+	if (!contact || !strlen(contact)){
 		printf("No contact selected\n");	
 		return -1;
 	}
-
-	if (!contact)
-		contact= selected_contact;
 
 	struct contact *pc = contact_by_callsign(contact);	
 	if(!pc)
@@ -837,8 +829,6 @@ void msg_remove_contact(const char *callsign){
 				pm = next;	
 			}
 		
-			if (!strcmp(selected_contact, callsign))
-				selected_contact[0] = 0;	
 			free(pc);
 			refresh_contacts++;
 			refresh_chat++;

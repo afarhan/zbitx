@@ -8,13 +8,17 @@ float ft8_next_sample();
 void ft8_process(char *message, int operation);
 void ft8_set_protocol(int protocol); //added for messenger operation MODE_FT8 or MODE_MSG
 
+#define MSG_INCOMING  		0x00000001
+#define MSG_ACKNOWLEDGE  0x00000002
 void msg_init();
 void msg_process(int freq, const char *text);
 void msg_save(char *filename);
 void msg_load(char *filename);
 void msg_poll();
 void msg_select(char *msg);
-int msg_post(const char *callsign, const char *message);
+
+//takes the "CONTACT" field as the recepient
+int msg_post(const char *message); 
 void msg_add_contact(const char *callsign);
 void msg_remove_contact(const char *callsign);
 void msg_presence(const char *new_presence);
