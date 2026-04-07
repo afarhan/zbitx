@@ -140,14 +140,18 @@ void interpret_command(char *cmd){
 
   if (check_cmd(cmd, "\\chk_vfo"))
     send_response("CHKVFO 1\n"); 
+  else if (check_cmd(cmd, "\\get_powerstat"))
+    send_response("RPRT 0\n"); 
   else if (check_cmd(cmd, "\\dump_state"))
     send_response(dump_state_response);
   else if (check_cmd(cmd, "V"))
     send_response("VFOA\n");
   else if (check_cmd(cmd, "v"))
     send_response("VFOA\n");
-	else if (!strcmp(cmd, "m VFOA"))
-		send_response("USB\n3000\n");
+  else if (!strcmp(cmd, "m"))
+    send_response("USB\n3000\n");
+  else if (!strcmp(cmd, "m VFOA"))
+    send_response("USB\n3000\n");
   else if (!strncmp(cmd, "m VFOA", 6))
     send_response("USB\n3000\n");
   else if (check_cmd(cmd, "f"))
@@ -167,6 +171,8 @@ void interpret_command(char *cmd){
   }
   else if (check_cmd(cmd, "s"))
     send_response("0\n");
+  else if (check_cmd(cmd, "S"))
+    send_response("RPRT 0\n");
   else if (check_cmd(cmd, "t"))
     tx_control(-1);
   else if (check_cmd(cmd, "q")){
