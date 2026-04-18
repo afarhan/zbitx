@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <errno.h>
+#include <assert.h>
 #include "sdr.h"
 #include "sdr_ui.h"
 #include "sound.h"
@@ -1019,12 +1020,19 @@ static int hw_settings_handler(void* user, const char* section,
   char cmd[1000];
   char new_value[200];
 
-	if (!strcmp(name, "f_start"))
+	if (!strcmp(name, "f_start")) {
+		assert(hw_init_index < sizeof(band_power)/sizeof(band_power[0]));
 		band_power[hw_init_index].f_start = atoi(value);
-	if (!strcmp(name, "f_stop"))
+	}
+	if (!strcmp(name, "f_stop")) {
+		assert(hw_init_index < sizeof(band_power)/sizeof(band_power[0]));
 		band_power[hw_init_index].f_stop = atoi(value);
+	}
 	if (!strcmp(name, "scale"))
+	{
+		assert(hw_init_index < sizeof(band_power)/sizeof(band_power[0]));
 		band_power[hw_init_index++].scale = atof(value);
+	}
 
 	if (!strcmp(name, "bfo_freq"))
 		bfo_freq = atoi(value);
