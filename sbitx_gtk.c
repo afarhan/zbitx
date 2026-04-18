@@ -60,7 +60,7 @@ struct Queue q_zbitx_console;
 /* Front Panel controls */
 char pins[15] = {0, 2, 3, 6, 7, 
 								10, 11, 12, 13, 14, 
-								21, 22, 23, 25, 27};
+								21, /*22, 23,*/ 25, 27};
 
 #define ENC1_A (13)
 #define ENC1_B (12)
@@ -3799,8 +3799,36 @@ void tuning_isr(void){
 }
 
 void key_isr(void){
-	dash_state = digitalRead(DASH);
-	ptt_state = digitalRead(PTT);
+  // Debounce
+	static uint8_t dash_input = 2;
+	static uint8_t ptt_input = 2;
+  for(int i=0; i < 8; ++i)
+	{
+    // LOW means pressed
+		if (digitalRead(DASH) == LOW)
+			dash_input = (dash_input << 1) + 1;
+    else
+      dash_input = (dash_input << 1) + 0;
+
+    if (dash_input == 0xFF)
+      dash_state = LOW;
+		else if (dash_input == 0x00)
+			dash_state = HIGH;
+
+		if (digitalRead(PTT) == LOW)
+			ptt_input = (ptt_input << 1) + 1;
+    else
+      ptt_input = (ptt_input << 1) + 0;
+
+    if (ptt_input == 0xFF)
+      ptt_state = LOW;
+		else if (ptt_input == 0x00)
+			ptt_state = HIGH;
+	}
+/*
+	if (dash_state == LOW) fprintf(stderr, ".");
+	if (ptt_state == LOW) fprintf(stderr, "-");
+*/
 }
 
 void query_swr(){
